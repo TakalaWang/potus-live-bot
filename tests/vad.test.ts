@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SileroVad } from '../src/audio/vad.js';
 
@@ -25,6 +25,19 @@ describe.skipIf(!existsSync(MODEL_PATH))('SileroVad（真模型）', () => {
     expect(b).toHaveLength(2); // 共 2048 bytes = 1024 樣本 = 2 frames
     expect(b[0].startSample).toBe(0);
     expect(b[1].startSample).toBe(512);
+  });
+
+  it('真實語音的機率要高（迴歸：模型輸入需含 64 樣本 context，餵 512 會默默輸出垃圾）', async () => {
+    const vad = await SileroVad.create(MODEL_PATH);
+    // tests/fixtures/speech.wav：16kHz mono 16-bit，3.5 秒清晰語音
+    const wav = readFileSync('tests/fixtures/speech.wav');
+    const pcm = wav.subarray(44); // 跳過 WAV header
+    const frames = await vad.process(pcm);
+    const maxProb = Math.max(...frames.map((f) => f.probability));
+    expect(maxProb).toBeGreaterThan(0.9);
+    // 至少三成的 frame 是語音（3.5 秒幾乎都在說話）
+    const speechFrames = frames.filter((f) => f.probability >= 0.5).length;
+    expect(speechFrames / frames.length).toBeGreaterThan(0.3);
   });
 
   it('白噪音的機率不會是 NaN 且在 [0,1]', async () => {
