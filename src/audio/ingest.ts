@@ -45,6 +45,32 @@ export interface CaptureHandle {
   abort: () => void;
 }
 
+/** replay 來源：本地檔直接用，YouTube 網址先解析出串流 URL */
+export async function resolveReplaySource(source: string): Promise<string> {
+  if (!/^https?:\/\//.test(source)) return source;
+  const { stdout } = await execFileP(
+    'yt-dlp',
+    ['-g', '-f', 'bestaudio/worst[acodec!=none]', source],
+    { timeout: 60_000 },
+  );
+  return stdout.trim().split('\n')[0];
+}
+
+/** replay 模式：把本地檔/串流 URL 當假直播全速灌入管線 */
+export function captureFile(input: string, onPcm: (chunk: Buffer) => void): CaptureHandle {
+  const ff = spawn(
+    'ffmpeg',
+    ['-hide_banner', '-loglevel', 'warning', '-nostdin', '-i', input, '-vn', '-f', 's16le', '-ar', '16000', '-ac', '1', 'pipe:1'],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  ff.stdout.on('data', onPcm);
+  ff.stderr.on('data', (d: Buffer) => console.warn(`[ffmpeg] ${d.toString().trim()}`));
+  const done = new Promise<void>((resolve) => {
+    ff.on('close', () => resolve());
+  });
+  return { done, abort: () => void ff.kill('SIGTERM') };
+}
+
 /**
  * Supervisor loop：直播期間持續拉 PCM。
  * ffmpeg 退出（HLS URL 過期、斷線）→ 重新確認直播狀態、拿新 URL 續抓；

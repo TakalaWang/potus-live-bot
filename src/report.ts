@@ -31,9 +31,10 @@ export function buildReport(
   const summary = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(truncate(`📊 直播分析報告：${meta.title}`, TITLE_LIMIT))
-    .setURL(meta.videoUrl)
     .setDescription(truncate(analysis.summaryZh || '（無摘要）', DESC_LIMIT))
     .setTimestamp();
+  // discord.js 只接受 http(s) URL；replay 本地檔（file://）不設連結
+  if (/^https?:\/\//.test(meta.videoUrl)) summary.setURL(meta.videoUrl);
 
   const summaryFields = [{ name: '⏱️ 直播長度', value: formatDuration(meta.durationSec), inline: true }];
   for (const chunk of chunkLines(analysis.keyPoints.map((p) => `• ${p}`))) {

@@ -9,8 +9,15 @@ import {
 
 const SEND_RETRIES = 3;
 
+export interface NotifierLike {
+  start(): Promise<void>;
+  notifyLiveStart(title: string, url: string): Promise<void>;
+  sendReport(embeds: EmbedBuilder[], transcriptTxt: Buffer, filename: string): Promise<void>;
+  stop(): Promise<void>;
+}
+
 /** 純推播 Discord bot：開播通知與結束報告 */
-export class Notifier {
+export class Notifier implements NotifierLike {
   private readonly client: Client;
   private channel: SendableChannels | null = null;
 

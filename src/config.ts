@@ -7,6 +7,7 @@ export interface Config {
   dataDir: string;
   transcribeModel: string;
   analyzeModel: string;
+  vadModelPath: string;
 }
 
 const REQUIRED_KEYS = ['DISCORD_BOT_TOKEN', 'DISCORD_CHANNEL_ID', 'GEMINI_API_KEY'] as const;
@@ -32,5 +33,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dataDir: env.DATA_DIR ?? './data',
     transcribeModel: env.GEMINI_TRANSCRIBE_MODEL ?? 'gemini-3.1-flash-lite',
     analyzeModel: env.GEMINI_ANALYZE_MODEL ?? 'gemini-3.5-flash',
+    vadModelPath: env.VAD_MODEL_PATH ?? 'models/silero_vad.onnx',
   };
 }

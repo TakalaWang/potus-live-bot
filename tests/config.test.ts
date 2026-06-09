@@ -26,6 +26,7 @@ describe('loadConfig', () => {
     expect(cfg.dataDir).toBe('./data');
     expect(cfg.transcribeModel).toBe('gemini-3.1-flash-lite');
     expect(cfg.analyzeModel).toBe('gemini-3.5-flash');
+    expect(cfg.vadModelPath).toBe('models/silero_vad.onnx');
   });
 
   it('覆寫預設值並解析數字', () => {
