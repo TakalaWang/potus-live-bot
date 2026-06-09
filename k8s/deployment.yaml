@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: potus-live-bot
+  namespace: potus-live-bot
+spec:
+  replicas: 1 # 必須單 replica：多個實例會重複通知與重複轉錄
+  strategy:
+    type: Recreate # 避免新舊 pod 同時抓流
+  selector:
+    matchLabels:
+      app: potus-live-bot
+  template:
+    metadata:
+      labels:
+        app: potus-live-bot
+    spec:
+      containers:
+        - name: bot
+          image: potus-live-bot:latest # 換成你的 registry
+          envFrom:
+            - secretRef:
+                name: potus-live-bot-secrets
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: YOUTUBE_CHANNEL_URL
+              value: https://www.youtube.com/@WhiteHouse/live
+            - name: POLL_INTERVAL_SEC
+              value: "60"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: potus-live-bot-data

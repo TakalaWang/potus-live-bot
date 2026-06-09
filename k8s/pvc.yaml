@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: potus-live-bot-data
+  namespace: potus-live-bot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi # 逐字稿與去重狀態（純文字，5Gi 綽綽有餘）
