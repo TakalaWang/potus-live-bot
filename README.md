@@ -33,7 +33,7 @@ A public Discord bot that monitors the White House YouTube channel. Any server a
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Setup guide: **[docs/free-deployment.md](docs/free-deployment.md)**.
+Deploying your own instance: create a Discord application (bot token + public key), a YouTube Data API key, and a Cloudflare account; deploy `worker/` with wrangler (KV namespace + secrets listed in `worker/wrangler.toml`), set the Discord Interactions Endpoint URL to `<worker>/interactions`, register commands with `pnpm register-commands`, and add the GitHub Actions secrets (`DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL`, `SUBSCRIPTIONS_SECRET`, optional `DISCORD_WEBHOOK_URL` for failure alerts).
 
 There is also a legacy 24/7 single-process mode (live ingestion with real-time transcription) for self-hosting on a machine with a residential IP — see below.
 
