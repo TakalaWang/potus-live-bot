@@ -1,17 +1,27 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { Analyzer } from './analysis/analyzer.js';
 import { getQuotes } from './analysis/quotes.js';
 import { Transcriber } from './asr/gemini.js';
 import { SpeechChunker } from './audio/chunker.js';
-import { captureFile, captureLive, resolveReplaySource } from './audio/ingest.js';
+import { captureFile, captureLive, resolveReplaySource, type CaptureHandle } from './audio/ingest.js';
 import { SileroVad } from './audio/vad.js';
 import { loadConfig, type Config } from './config.js';
 import { ConsoleNotifier } from './discord/console-notifier.js';
 import { Notifier, type NotifierLike } from './discord/notifier.js';
 import { createGenAI } from './genai.js';
-import { runLiveSession, type PipelineDeps, type SessionMeta } from './pipeline.js';
+import {
+  runLiveSession,
+  runPostAnalysis,
+  type PipelineDeps,
+  type PostAnalysisDeps,
+  type SessionMeta,
+} from './pipeline.js';
 import { SeenStore, TranscriptStore } from './state.js';
 import { checkLive } from './watcher.js';
+
+// 優雅關閉：abort 進行中的 capture → pipeline flush 逐字稿後跳過分析 → 重啟後 reattach
+let shuttingDown = false;
+let activeCapture: CaptureHandle | null = null;
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -38,6 +48,18 @@ async function main(): Promise<void> {
     : new Notifier(config.discordBotToken, config.discordChannelId);
   await notifier.start();
 
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(sig, () => {
+      console.log(`[main] 收到 ${sig}，優雅關閉中（flush 逐字稿後退出）`);
+      shuttingDown = true;
+      if (activeCapture) {
+        activeCapture.abort();
+      } else {
+        void notifier.stop().finally(() => process.exit(0));
+      }
+    });
+  }
+
   const sessionDeps = (videoId: string, startCapture: PipelineDeps['startCapture']): PipelineDeps => ({
     vad,
     chunker: new SpeechChunker(),
@@ -46,27 +68,36 @@ async function main(): Promise<void> {
     analyzer,
     getQuotes,
     notifier,
-    startCapture,
+    startCapture: (onPcm) => {
+      const handle = startCapture(onPcm);
+      activeCapture = handle;
+      return handle;
+    },
   });
+  const postDeps: PostAnalysisDeps = { analyzer, getQuotes, notifier };
 
   if (replayIdx !== -1) {
     const source = argv[replayIdx + 1];
     if (!source) throw new Error('--replay 需要本地影片檔路徑或 YouTube 網址');
-    await runReplay(source, config, sessionDeps);
+    await runReplay(source, sessionDeps);
     await notifier.stop();
     return;
   }
 
   console.log(`[main] 開始監測 ${config.youtubeChannelUrl}（每 ${config.pollIntervalSec}s 輪詢）`);
   const seen = new SeenStore(config.dataDir);
-  for (;;) {
+  await recoverOrphans(config, seen, postDeps);
+
+  while (!shuttingDown) {
     try {
       await pollOnce(config, seen, notifier, vad, sessionDeps);
     } catch (err) {
       console.error('[main] 主迴圈錯誤：', err);
     }
+    if (shuttingDown) break;
     await sleep(config.pollIntervalSec * 1000);
   }
+  await notifier.stop();
 }
 
 async function pollOnce(
@@ -90,23 +121,72 @@ async function pollOnce(
     await notifier.notifyLiveStart(title, videoUrl);
     console.log(`[main] 直播開始：${title}（${videoId}）`);
   } else {
-    // 程序重啟後重新接上：不重複通知，續寫同一份逐字稿
+    // 程序重啟後重新接上：不重複通知，續寫同一份逐字稿（時間軸由 pipeline 接續）
     console.log(`[main] 重新接上進行中的直播：${videoId}`);
   }
 
   vad.reset();
   const meta: SessionMeta = { videoId, title, videoUrl };
-  await runLiveSession(
+  const result = await runLiveSession(
     meta,
     sessionDeps(videoId, (onPcm) => captureLive(config.youtubeChannelUrl, videoId, onPcm)),
   );
-  seen.markSeen(`done:${videoId}`);
-  console.log(`[main] 場次處理完成：${videoId}`);
+  activeCapture = null;
+  if (result === 'completed') {
+    seen.markSeen(`done:${videoId}`);
+    console.log(`[main] 場次處理完成：${videoId}`);
+  } else {
+    console.log(`[main] 場次被中止（優雅關閉），重啟後將 reattach：${videoId}`);
+  }
+}
+
+/**
+ * 孤兒回收：「直播結束 → 報告送出」之間 crash 時，逐字稿留在磁碟但 done: 未標記。
+ * 啟動時掃描這類場次，直接從磁碟補跑分析與報告。
+ */
+async function recoverOrphans(config: Config, seen: SeenStore, postDeps: PostAnalysisDeps): Promise<void> {
+  let files: string[];
+  try {
+    files = readdirSync(config.dataDir);
+  } catch {
+    return; // dataDir 尚未建立（首次啟動）
+  }
+  const orphanIds = files
+    .map((f) => /^transcript-(.+)\.jsonl$/.exec(f)?.[1])
+    .filter((id): id is string => !!id && !id.startsWith('replay-'))
+    .filter((id) => seen.isSeen(id) && !seen.isSeen(`done:${id}`));
+  if (orphanIds.length === 0) return;
+
+  // 正在直播的那場不是孤兒，交給主迴圈 reattach
+  const status = await checkLive(config.youtubeChannelUrl);
+  const liveId = status.state === 'live' ? status.videoId : null;
+
+  for (const videoId of orphanIds) {
+    if (videoId === liveId) continue;
+    console.log(`[main] 回收孤兒場次（crash 後未發報告）：${videoId}`);
+    const transcript = new TranscriptStore(config.dataDir, videoId);
+    const durationSec = transcript.readAll().reduce((max, s) => Math.max(max, s.end), 0);
+    try {
+      await runPostAnalysis(
+        {
+          videoId,
+          title: `白宮直播（${videoId}，程序中斷後恢復）`,
+          videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        },
+        postDeps,
+        transcript,
+        durationSec,
+        ['（程序曾中斷，尾段可能缺漏）'],
+      );
+      seen.markSeen(`done:${videoId}`);
+    } catch (err) {
+      console.error(`[main] 孤兒場次 ${videoId} 回收失敗，下次啟動再試：`, err);
+    }
+  }
 }
 
 async function runReplay(
   source: string,
-  config: Config,
   sessionDeps: (videoId: string, startCapture: PipelineDeps['startCapture']) => PipelineDeps,
 ): Promise<void> {
   const videoId = `replay-${source.replace(/[^A-Za-z0-9_-]/g, '').slice(-20) || 'local'}`;

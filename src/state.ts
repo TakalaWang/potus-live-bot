@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TranscriptSegment } from './types.js';
 
@@ -19,7 +19,10 @@ export class SeenStore {
 
   markSeen(videoId: string): void {
     this.seen.add(videoId);
-    writeFileSync(this.filePath, JSON.stringify([...this.seen]));
+    // 原子寫入：直接覆寫被 kill 在中途會截斷檔案
+    const tmpPath = `${this.filePath}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify([...this.seen]));
+    renameSync(tmpPath, this.filePath);
   }
 
   private load(): Set<string> {
@@ -27,7 +30,8 @@ export class SeenStore {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.filePath, 'utf8'));
       return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []);
-    } catch {
+    } catch (err) {
+      console.warn(`[state] ${this.filePath} 損毀，視為空（可能重複通知一次）：${(err as Error).message}`);
       return new Set();
     }
   }

@@ -100,11 +100,12 @@ describe('runLiveSession', () => {
         startCapture: (onPcm) => {
           const done = (async () => {
             // 段1：10 靜音、10 語音、10 靜音（closeGap=6 會關閉段落）
-            onPcm(silenceFrames(10));
-            onPcm(speechFrames(10));
-            onPcm(silenceFrames(10));
+            await onPcm(silenceFrames(10));
+            await onPcm(speechFrames(10));
+            await onPcm(silenceFrames(10));
             // 段2：10 語音，直播結束（靠 flushAll 收尾）
-            onPcm(speechFrames(10));
+            await onPcm(speechFrames(10));
+            return 'ended' as const;
           })();
           return { done, abort: () => {} };
         },
@@ -160,9 +161,10 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            onPcm(speechFrames(10));
-            onPcm(silenceFrames(10)); // 關閉段1
-            onPcm(speechFrames(10)); // 段2 由 flushAll 收尾 → 第二次 transcribe 失敗
+            await onPcm(speechFrames(10));
+            await onPcm(silenceFrames(10)); // 關閉段1
+            await onPcm(speechFrames(10)); // 段2 由 flushAll 收尾 → 第二次 transcribe 失敗
+            return 'ended' as const;
           })();
           return { done, abort: () => {} };
         },
@@ -206,7 +208,8 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            onPcm(silenceFrames(50));
+            await onPcm(silenceFrames(50));
+            return 'ended' as const;
           })();
           return { done, abort: () => {} };
         },
@@ -215,6 +218,88 @@ describe('runLiveSession', () => {
 
     expect(analyzerCalled).toBe(false);
     expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('未偵測到語音');
+  });
+
+  it('重啟 reattach：時間戳接續舊時間軸、報告註明中斷、長度含重啟前', async () => {
+    const transcript = new TranscriptStore(dir, 'vid5');
+    // 模擬 crash 前已有逐字稿到 100 秒
+    transcript.append({ start: 90, end: 100, text: 'before crash' });
+    let sent: { embeds: EmbedBuilder[] } | null = null;
+
+    const result = await runLiveSession(
+      { videoId: 'vid5', title: 'T', videoUrl: 'https://youtu.be/vid5' },
+      {
+        vad: makeFakeVad(),
+        chunker: new SpeechChunker(CHUNKER_OPTS),
+        transcript,
+        transcriber: { transcribe: async () => 'after restart' },
+        analyzer: { analyze: async () => ({ summaryZh: 's', keyPoints: [], stockPicks: [] }) },
+        getQuotes: async () => [],
+        notifier: {
+          async sendReport(embeds) {
+            sent = { embeds };
+          },
+        },
+        startCapture: (onPcm) => {
+          const done = (async () => {
+            await onPcm(speechFrames(10)); // 重啟後第一段語音
+            return 'ended' as const;
+          })();
+          return { done, abort: () => {} };
+        },
+      },
+    );
+
+    expect(result).toBe('completed');
+    const segments = transcript.readAll();
+    expect(segments).toHaveLength(2);
+    // 新段落時間戳 >= 100（接續），而非從 0 重算
+    expect(segments[1].start).toBeGreaterThanOrEqual(100);
+    expect(segments[1].text).toBe('after restart');
+    // 報告註明中斷
+    expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('程序重啟');
+  });
+
+  it('abort（優雅關閉）：flush 逐字稿但跳過分析與報告，回傳 aborted', async () => {
+    const transcript = new TranscriptStore(dir, 'vid6');
+    let analyzerCalled = false;
+    let reportSent = false;
+
+    const result = await runLiveSession(
+      { videoId: 'vid6', title: 'T', videoUrl: 'https://youtu.be/vid6' },
+      {
+        vad: makeFakeVad(),
+        chunker: new SpeechChunker(CHUNKER_OPTS),
+        transcript,
+        transcriber: { transcribe: async () => 'partial speech' },
+        analyzer: {
+          analyze: async () => {
+            analyzerCalled = true;
+            return { summaryZh: 's', keyPoints: [], stockPicks: [] };
+          },
+        },
+        getQuotes: async () => [],
+        notifier: {
+          async sendReport() {
+            reportSent = true;
+          },
+        },
+        startCapture: (onPcm) => {
+          const done = (async () => {
+            await onPcm(speechFrames(10)); // 說到一半被 abort
+            return 'aborted' as const;
+          })();
+          return { done, abort: () => {} };
+        },
+      },
+    );
+
+    expect(result).toBe('aborted');
+    // flushAll 收尾的語音仍被轉錄、落盤
+    expect(transcript.readAll().map((s) => s.text)).toEqual(['partial speech']);
+    // 但不分析、不發報告（直播沒結束）
+    expect(analyzerCalled).toBe(false);
+    expect(reportSent).toBe(false);
   });
 
   it('分析失敗時仍送出報告（含逐字稿附件）', async () => {
@@ -241,7 +326,8 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            onPcm(speechFrames(10));
+            await onPcm(speechFrames(10));
+            return 'ended' as const;
           })();
           return { done, abort: () => {} };
         },
