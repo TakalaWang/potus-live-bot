@@ -70,7 +70,7 @@ async function handleInteraction(req: Request, env: Env): Promise<Response> {
     type: number;
     guild_id?: string;
     channel_id?: string;
-    data?: { name?: string };
+    data?: { name?: string; options?: { name: string; value: string }[] };
   };
 
   if (interaction.type === 1) {
@@ -80,13 +80,20 @@ async function handleInteraction(req: Request, env: Env): Promise<Response> {
   if (interaction.type === 2) {
     const name = interaction.data?.name;
     const guildId = interaction.guild_id;
-    const channelId = interaction.channel_id;
-    if (!guildId || !channelId) {
-      return ephemeral('這個指令只能在伺服器頻道中使用。');
+    if (!guildId) {
+      return ephemeral('這個指令只能在伺服器中使用。');
     }
     if (name === 'subscribe') {
+      const channelId =
+        interaction.data?.options?.find((o) => o.name === 'channel')?.value ?? interaction.channel_id;
+      if (!channelId) {
+        return ephemeral('請用 channel 參數指定要接收通知的頻道。');
+      }
       await env.STATE.put(`sub:${guildId}`, JSON.stringify({ channelId }));
-      return ephemeral(`✅ 已訂閱！白宮開直播時會在 <#${channelId}> 通知，直播結束後送出分析報告。\n用 /unsubscribe 可取消。`);
+      return ephemeral(
+        `✅ 已訂閱！白宮開直播時會在 <#${channelId}> 通知，直播結束後送出分析報告。\n` +
+          '請確認機器人在該頻道有「檢視頻道」「發送訊息」「嵌入連結」「附加檔案」權限。\n用 /unsubscribe 可取消。',
+      );
     }
     if (name === 'unsubscribe') {
       await env.STATE.delete(`sub:${guildId}`);

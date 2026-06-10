@@ -1,6 +1,6 @@
 # Free serverless deployment (public multi-server bot)
 
-Run the bot with **zero always-on servers and zero monthly cost**. Server admins invite the bot and run `/subscribe` in the channel that should receive notifications — no per-server configuration on your side.
+Run the bot with **zero always-on servers and zero monthly cost**. Server admins invite the bot and run `/subscribe channel:#target` to pick the notification channel — no per-server configuration on your side.
 
 ```
 Discord /subscribe ──► Cloudflare Worker /interactions (Ed25519 verified)
@@ -83,7 +83,7 @@ Developer Portal → General Information → **Interactions Endpoint URL** → `
 
 ## 6. Test end to end
 
-1. In a test server: invite the bot, run `/subscribe` in a channel.
+1. In a test server: invite the bot, run `/subscribe channel:#test`.
 2. GitHub → Actions → **stream-report** → Run workflow → paste any past White House `video_id`. The report should arrive in the subscribed channel in ~10–30 minutes.
 3. Worker detection can be tested by temporarily pointing `CHANNEL_ID` at any currently-live channel and redeploying.
 

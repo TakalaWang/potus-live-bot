@@ -9,9 +9,18 @@ const commands = [
   {
     type: 1,
     name: 'subscribe',
-    description: 'Subscribe this channel to White House live notifications and post-stream reports',
+    description: 'Subscribe a channel to White House live notifications and post-stream reports',
     default_member_permissions: '32',
     contexts: [0],
+    options: [
+      {
+        type: 7,
+        name: 'channel',
+        description: 'Channel that will receive notifications and reports',
+        required: true,
+        channel_types: [0, 5],
+      },
+    ],
   },
   {
     type: 1,

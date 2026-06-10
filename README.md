@@ -11,7 +11,7 @@ A public Discord bot that monitors the White House YouTube channel. Any server a
 ## Using the bot (server admins)
 
 1. Invite the bot to your server (link in the repo description; requires Manage Server).
-2. In the channel that should receive notifications, run **`/subscribe`**.
+2. Run **`/subscribe channel:#your-channel`** anywhere in the server (requires Manage Server).
 3. That's it. `/unsubscribe` stops notifications for the server.
 
 ## Architecture (free serverless deployment)
