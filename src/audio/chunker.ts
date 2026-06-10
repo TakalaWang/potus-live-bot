@@ -1,17 +1,16 @@
 import type { SpeechChunk } from '../types.js';
 
 export interface ChunkerOptions {
-  /** 語音機率閾值 */
   threshold?: number;
-  /** 語音段前 padding 秒數 */
+
   prePadSec?: number;
-  /** 語音段後 padding 秒數 */
+
   postPadSec?: number;
-  /** 靜音超過此秒數才關閉段落（更短的間隔會併入同段） */
+
   closeGapSec?: number;
-  /** 累積語音達此秒數即 flush */
+
   maxSpeechSec?: number;
-  /** 距上次 flush 超過此秒數且有內容即 flush */
+
   maxIntervalSec?: number;
   sampleRate?: number;
   frameSamples?: number;
@@ -26,14 +25,10 @@ interface OpenSegment {
 
 interface ClosedSegment {
   startFrame: number;
-  endFrame: number; // inclusive
+  endFrame: number;
   frames: Buffer[];
 }
 
-/**
- * 把逐 frame 的 VAD 機率與 PCM 組成語音 chunk 的狀態機。
- * 每次 pushFrame 對應一個 512-sample frame（32ms @16kHz）。
- */
 export class SpeechChunker {
   private readonly threshold: number;
   private readonly prePadFrames: number;
@@ -103,7 +98,6 @@ export class SpeechChunker {
 
     const bufferedFrames = this.pendingFrameCount + (this.open?.frames.length ?? 0);
     if (bufferedFrames === 0 && this.open === null) {
-      // 沒有任何內容時讓 interval 計時器滑動，避免久未開口時一開口就 flush 小段落
       this.lastFlushSec = now;
     } else if (
       bufferedFrames * this.frameSec >= this.maxSpeechSec ||
@@ -116,18 +110,16 @@ export class SpeechChunker {
     return out;
   }
 
-  /** 串流結束時取出殘餘內容 */
   flushAll(): SpeechChunk | null {
     return this.emitAll();
   }
 
-  /** 關閉 open 段落：修剪尾端靜音至 postPad，無語音內容則丟棄 */
   private closeOpenSegment(): void {
     const seg = this.open;
     if (!seg) return;
     this.open = null;
 
-    if (seg.lastSpeechFrame < seg.startFrame) return; // 純靜音（forced reopen 後沒再說話）
+    if (seg.lastSpeechFrame < seg.startFrame) return;
 
     const drop = Math.min(Math.max(0, seg.silenceRun - this.postPadFrames), seg.frames.length);
     const frames = drop > 0 ? seg.frames.slice(0, -drop) : seg.frames;
@@ -141,12 +133,11 @@ export class SpeechChunker {
     this.pendingFrameCount += frames.length;
   }
 
-  /** flush 全部 pending（必要時強制關閉 open），合併為單一 chunk */
   private emitAll(): SpeechChunk | null {
     if (this.open) {
       const wasOpen = this.open;
       this.closeOpenSegment();
-      // 強制切割時若仍在說話，立刻接續新段落（無 pre-pad，避免重複音訊）
+
       if (wasOpen.silenceRun < this.closeGapFrames) {
         this.open = {
           startFrame: this.frameIndex,

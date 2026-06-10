@@ -1,4 +1,3 @@
-/** 16-bit mono PCM → WAV（44-byte RIFF header） */
 export function pcmToWav(pcm: Buffer, sampleRate = 16000): Buffer {
   const channels = 1;
   const bitsPerSample = 16;
@@ -10,8 +9,8 @@ export function pcmToWav(pcm: Buffer, sampleRate = 16000): Buffer {
   header.writeUInt32LE(36 + pcm.length, 4);
   header.write('WAVE', 8, 'ascii');
   header.write('fmt ', 12, 'ascii');
-  header.writeUInt32LE(16, 16); // fmt chunk size
-  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
   header.writeUInt16LE(channels, 22);
   header.writeUInt32LE(sampleRate, 24);
   header.writeUInt32LE(byteRate, 28);

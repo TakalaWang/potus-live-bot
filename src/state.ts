@@ -2,7 +2,6 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { join } from 'node:path';
 import type { TranscriptSegment } from './types.js';
 
-/** 已通知過的 video ID，JSON 檔持久化（重啟後不重複通知） */
 export class SeenStore {
   private readonly filePath: string;
   private seen: Set<string>;
@@ -19,7 +18,6 @@ export class SeenStore {
 
   markSeen(videoId: string): void {
     this.seen.add(videoId);
-    // 原子寫入：直接覆寫被 kill 在中途會截斷檔案
     const tmpPath = `${this.filePath}.tmp`;
     writeFileSync(tmpPath, JSON.stringify([...this.seen]));
     renameSync(tmpPath, this.filePath);
@@ -37,7 +35,6 @@ export class SeenStore {
   }
 }
 
-/** 單場直播的逐字稿，JSONL 即寫即存（程序掛掉不丟已轉錄內容） */
 export class TranscriptStore {
   private readonly filePath: string;
 
@@ -61,13 +58,11 @@ export class TranscriptStore {
           segments.push(parsed);
         }
       } catch {
-        // 損毀行（寫到一半被殺）直接略過
       }
     }
     return segments;
   }
 
-  /** `[mm:ss] text` 格式全文（給 Gemini 分析與 .txt 附件） */
   toText(): string {
     return this.readAll()
       .map((s) => `[${formatTime(s.start)}] ${s.text}`)

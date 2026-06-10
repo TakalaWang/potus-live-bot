@@ -30,7 +30,7 @@ describe('SeenStore', () => {
     writeFileSync(join(dir, 'seen.json'), 'not json{');
     const store = new SeenStore(dir);
     expect(store.isSeen('abc')).toBe(false);
-    store.markSeen('abc'); // 還能寫
+    store.markSeen('abc');
     expect(new SeenStore(dir).isSeen('abc')).toBe(true);
   });
 });

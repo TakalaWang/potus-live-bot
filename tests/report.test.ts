@@ -33,15 +33,15 @@ describe('buildReport', () => {
     expect(summary.data.url).toBe(META.videoUrl);
     expect(summary.data.description).toContain('晶片');
     const fieldText = JSON.stringify(summary.data.fields);
-    expect(fieldText).toContain('1:02:05'); // 直播長度
+    expect(fieldText).toContain('1:02:05');
 
     const stocks = embeds[1];
     const stockText = JSON.stringify(stocks.data.fields);
     expect(stockText).toContain('NVDA');
     expect(stockText).toContain('1250.5');
     expect(stockText).toContain('-2.34');
-    expect(stockText).toContain('📉'); // bearish
-    expect(stockText).toContain('📈'); // bullish
+    expect(stockText).toContain('📉');
+    expect(stockText).toContain('📈');
     expect(stockText).toContain('晶片關稅推高成本');
   });
 
@@ -52,7 +52,7 @@ describe('buildReport', () => {
   });
 
   it('查無行情的 ticker 顯示行情查詢失敗', () => {
-    const embeds = buildReport(ANALYSIS, [QUOTES[0]], META); // XOM 缺行情
+    const embeds = buildReport(ANALYSIS, [QUOTES[0]], META);
     const stockText = JSON.stringify(embeds[1].data.fields);
     expect(stockText).toContain('行情查詢失敗');
   });

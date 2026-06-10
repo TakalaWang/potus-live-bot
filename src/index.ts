@@ -19,7 +19,6 @@ import {
 import { SeenStore, TranscriptStore } from './state.js';
 import { checkLive } from './watcher.js';
 
-// 優雅關閉：abort 進行中的 capture → pipeline flush 逐字稿後跳過分析 → 重啟後 reattach
 let shuttingDown = false;
 let activeCapture: CaptureHandle | null = null;
 
@@ -121,7 +120,6 @@ async function pollOnce(
     await notifier.notifyLiveStart(title, videoUrl);
     console.log(`[main] 直播開始：${title}（${videoId}）`);
   } else {
-    // 程序重啟後重新接上：不重複通知，續寫同一份逐字稿（時間軸由 pipeline 接續）
     console.log(`[main] 重新接上進行中的直播：${videoId}`);
   }
 
@@ -140,16 +138,12 @@ async function pollOnce(
   }
 }
 
-/**
- * 孤兒回收：「直播結束 → 報告送出」之間 crash 時，逐字稿留在磁碟但 done: 未標記。
- * 啟動時掃描這類場次，直接從磁碟補跑分析與報告。
- */
 async function recoverOrphans(config: Config, seen: SeenStore, postDeps: PostAnalysisDeps): Promise<void> {
   let files: string[];
   try {
     files = readdirSync(config.dataDir);
   } catch {
-    return; // dataDir 尚未建立（首次啟動）
+    return;
   }
   const orphanIds = files
     .map((f) => /^transcript-(.+)\.jsonl$/.exec(f)?.[1])
@@ -157,7 +151,6 @@ async function recoverOrphans(config: Config, seen: SeenStore, postDeps: PostAna
     .filter((id) => seen.isSeen(id) && !seen.isSeen(`done:${id}`));
   if (orphanIds.length === 0) return;
 
-  // 正在直播的那場不是孤兒，交給主迴圈 reattach
   const status = await checkLive(config.youtubeChannelUrl);
   const liveId = status.state === 'live' ? status.videoId : null;
 

@@ -16,7 +16,6 @@ export interface NotifierLike {
   stop(): Promise<void>;
 }
 
-/** 純推播 Discord bot：開播通知與結束報告 */
 export class Notifier implements NotifierLike {
   private readonly client: Client;
   private channel: SendableChannels | null = null;
@@ -25,12 +24,10 @@ export class Notifier implements NotifierLike {
     private readonly token: string,
     private readonly channelId: string,
   ) {
-    // 純推播只需 Guilds intent；發送走 REST，不需要 privileged intents
     this.client = new Client({ intents: [GatewayIntentBits.Guilds] });
   }
 
   async start(): Promise<void> {
-    // login() 在驗證完成就 resolve，gateway ready 要另外等
     const ready = new Promise<void>((resolve) => {
       this.client.once(Events.ClientReady, () => resolve());
     });
@@ -65,7 +62,6 @@ export class Notifier implements NotifierLike {
   }
 
   async stop(): Promise<void> {
-    // gateway websocket 會讓 event loop 活著，不 destroy 程序不會退出
     await this.client.destroy();
   }
 
@@ -82,7 +78,7 @@ export class Notifier implements NotifierLike {
         if (attempt < SEND_RETRIES) await sleep(2000 * attempt);
       }
     }
-    // 最終失敗記 log、不致命（轉錄資料仍在磁碟上）
+
     console.error('[discord] 發送最終失敗：', lastError);
   }
 }

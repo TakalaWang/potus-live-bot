@@ -18,7 +18,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** fake VAD：frame 第一個 byte 為 1 → 語音 (0.9)，否則靜音 (0.1)。維持與真 VAD 相同的 frame 切割行為 */
 function makeFakeVad() {
   let residual = Buffer.alloc(0);
   let samplesSeen = 0;
@@ -73,7 +72,7 @@ describe('runLiveSession', () => {
       { videoId: 'vid1', title: 'Test Stream', videoUrl: 'https://youtu.be/vid1' },
       {
         vad: makeFakeVad(),
-        // maxSpeechSec=0.4（13 frames）→ 段1 與段2 各自觸發切割，產生兩個 chunk
+
         chunker: new SpeechChunker({ ...CHUNKER_OPTS, maxSpeechSec: 0.4 }),
         transcript,
         transcriber: {
@@ -99,11 +98,10 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            // 段1：10 靜音、10 語音、10 靜音（closeGap=6 會關閉段落）
             await onPcm(silenceFrames(10));
             await onPcm(speechFrames(10));
             await onPcm(silenceFrames(10));
-            // 段2：10 語音，直播結束（靠 flushAll 收尾）
+
             await onPcm(speechFrames(10));
             return 'ended' as const;
           })();
@@ -112,18 +110,14 @@ describe('runLiveSession', () => {
       },
     );
 
-    // 兩個 chunk 都被轉錄（段1 由 closeGap 關閉，段2 由 flushAll 收尾）
     expect(transcribed).toHaveLength(2);
 
-    // 逐字稿依序寫入
     const segments = transcript.readAll();
     expect(segments.map((s) => s.text)).toEqual(['transcribed-1', 'transcribed-2']);
     expect(segments[0].start).toBeLessThan(segments[1].start);
 
-    // 分析收到含逐字稿的全文
     expect(analyzedText).toContain('transcribed-1');
 
-    // 報告送出：含股票 embed 與正確檔名
     expect(sent).not.toBeNull();
     expect(sent!.filename).toBe('transcript-vid1.txt');
     expect(sent!.txt.toString()).toContain('transcribed-1');
@@ -162,8 +156,8 @@ describe('runLiveSession', () => {
         startCapture: (onPcm) => {
           const done = (async () => {
             await onPcm(speechFrames(10));
-            await onPcm(silenceFrames(10)); // 關閉段1
-            await onPcm(speechFrames(10)); // 段2 由 flushAll 收尾 → 第二次 transcribe 失敗
+            await onPcm(silenceFrames(10));
+            await onPcm(speechFrames(10));
             return 'ended' as const;
           })();
           return { done, abort: () => {} };
@@ -174,7 +168,7 @@ describe('runLiveSession', () => {
     const texts = transcript.readAll().map((s) => s.text);
     expect(texts[0]).toBe('ok-1');
     expect(texts[1]).toMatch(/\[轉錄失敗 \d{2}:\d{2}–\d{2}:\d{2}\]/);
-    // 報告 embed 內有轉錄缺漏欄位
+
     expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('轉錄缺漏');
   });
 
@@ -222,7 +216,7 @@ describe('runLiveSession', () => {
 
   it('重啟 reattach：時間戳接續舊時間軸、報告註明中斷、長度含重啟前', async () => {
     const transcript = new TranscriptStore(dir, 'vid5');
-    // 模擬 crash 前已有逐字稿到 100 秒
+
     transcript.append({ start: 90, end: 100, text: 'before crash' });
     let sent: { embeds: EmbedBuilder[] } | null = null;
 
@@ -242,7 +236,7 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            await onPcm(speechFrames(10)); // 重啟後第一段語音
+            await onPcm(speechFrames(10));
             return 'ended' as const;
           })();
           return { done, abort: () => {} };
@@ -253,10 +247,10 @@ describe('runLiveSession', () => {
     expect(result).toBe('completed');
     const segments = transcript.readAll();
     expect(segments).toHaveLength(2);
-    // 新段落時間戳 >= 100（接續），而非從 0 重算
+
     expect(segments[1].start).toBeGreaterThanOrEqual(100);
     expect(segments[1].text).toBe('after restart');
-    // 報告註明中斷
+
     expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('程序重啟');
   });
 
@@ -286,7 +280,7 @@ describe('runLiveSession', () => {
         },
         startCapture: (onPcm) => {
           const done = (async () => {
-            await onPcm(speechFrames(10)); // 說到一半被 abort
+            await onPcm(speechFrames(10));
             return 'aborted' as const;
           })();
           return { done, abort: () => {} };
@@ -295,9 +289,9 @@ describe('runLiveSession', () => {
     );
 
     expect(result).toBe('aborted');
-    // flushAll 收尾的語音仍被轉錄、落盤
+
     expect(transcript.readAll().map((s) => s.text)).toEqual(['partial speech']);
-    // 但不分析、不發報告（直播沒結束）
+
     expect(analyzerCalled).toBe(false);
     expect(reportSent).toBe(false);
   });

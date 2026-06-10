@@ -7,17 +7,15 @@ export interface ReportMeta {
   title: string;
   videoUrl: string;
   durationSec: number;
-  /** 轉錄失敗的時間範圍，如 '12:03–12:48' */
   failedRanges: string[];
 }
 
-// Discord embed 硬限制（超過會被 API 以 400 拒絕）
 const FIELD_VALUE_LIMIT = 1024;
 const FIELD_NAME_LIMIT = 256;
 const TITLE_LIMIT = 256;
 const DESC_LIMIT = 4096;
 const MAX_FIELDS = 25;
-const TOTAL_LIMIT = 6000; // 單一訊息所有 embed 文字總長
+const TOTAL_LIMIT = 6000;
 
 export function embedTotalLength(embed: EmbedBuilder): number {
   return embed.length;
@@ -33,7 +31,7 @@ export function buildReport(
     .setTitle(truncate(`📊 直播分析報告：${meta.title}`, TITLE_LIMIT))
     .setDescription(truncate(analysis.summaryZh || '（無摘要）', DESC_LIMIT))
     .setTimestamp();
-  // discord.js 只接受 http(s) URL；replay 本地檔（file://）不設連結
+
   if (/^https?:\/\//.test(meta.videoUrl)) summary.setURL(meta.videoUrl);
 
   const summaryFields = [{ name: '⏱️ 直播長度', value: formatDuration(meta.durationSec), inline: true }];
@@ -64,7 +62,6 @@ export function buildReport(
   }
   embeds[embeds.length - 1].setFooter({ text: DISCLAIMER });
 
-  // 全部 embed 同一則訊息送出，總長必須 ≤ 6000：從後面開始拔 field
   while (embeds.reduce((sum, e) => sum + e.length, 0) > TOTAL_LIMIT) {
     const target = [...embeds].reverse().find((e) => (e.data.fields?.length ?? 0) > 0);
     if (!target) break;
@@ -86,7 +83,6 @@ function pickValue(pick: StockPick, quote: StockQuote | undefined): string {
   return `${priceLine}\n${pick.reason}`;
 }
 
-/** 把多行文字組成多個 ≤1024 字的塊 */
 function chunkLines(lines: string[]): string[] {
   const chunks: string[] = [];
   let current = '';

@@ -1,7 +1,6 @@
 import type { EmbedBuilder } from 'discord.js';
 import type { NotifierLike } from './notifier.js';
 
-/** --no-discord 模式：報告印到 stdout（replay 驗證用，不需要 Discord 設定） */
 export class ConsoleNotifier implements NotifierLike {
   async start(): Promise<void> {}
 
