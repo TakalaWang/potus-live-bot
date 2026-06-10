@@ -19,4 +19,4 @@ GITHUB_REPO = "TakalaWang/potus-live-bot"
 [[kv_namespaces]]
 binding = "STATE"
 # create with: pnpm exec wrangler kv namespace create STATE
-id = "PASTE_KV_NAMESPACE_ID_HERE"
+id = "a45842ec8ded478b9703aae3a2f31707"

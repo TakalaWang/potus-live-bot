@@ -31,10 +31,24 @@ export default {
       }
       return Response.json(await listSubscriptions(env));
     }
+    if (req.method === 'GET' && url.pathname === '/debug') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      try {
+        return Response.json({ live: await findLiveVideo(env) });
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
     return new Response('potus-live-bot worker', { status: 200 });
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(tick(env));
+    ctx.waitUntil(
+      tick(env).catch((err) => {
+        console.error('tick failed:', err instanceof Error ? err.message : String(err));
+      }),
+    );
   },
 };
 
@@ -222,7 +236,8 @@ async function recentVideoIds(env: Env): Promise<string[]> {
       });
       const ids = (data.items ?? []).map((item) => item.contentDetails.videoId);
       if (ids.length > 0) return ids;
-    } catch {
+    } catch (err) {
+      console.warn(`playlist ${playlistId}: ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
   }
