@@ -4,8 +4,6 @@ export interface Env {
   DISCORD_BOT_TOKEN: string;
   DISCORD_PUBLIC_KEY: string;
   SUBSCRIPTIONS_SECRET: string;
-  GITHUB_TOKEN: string;
-  GITHUB_REPO: string;
   CHANNEL_ID: string;
 }
 
@@ -13,6 +11,8 @@ interface LiveVideo {
   videoId: string;
   title: string;
 }
+
+const PENDING_PREFIX = 'pending:';
 
 interface Subscription {
   guildId: string;
@@ -30,6 +30,34 @@ export default {
         return new Response('unauthorized', { status: 401 });
       }
       return Response.json(await listSubscriptions(env));
+    }
+    // The home agent polls /pending for ended streams to process, then POSTs /pending/done.
+    if (req.method === 'GET' && url.pathname === '/pending') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      return Response.json(await listPending(env));
+    }
+    if (req.method === 'POST' && url.pathname === '/pending/done') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      const { videoId } = (await req.json()) as { videoId?: string };
+      if (!videoId) return new Response('videoId required', { status: 400 });
+      await env.STATE.delete(`${PENDING_PREFIX}${videoId}`);
+      return Response.json({ ok: true });
+    }
+    // Manually enqueue a video for the agent — handy for testing without a live stream.
+    if (req.method === 'POST' && url.pathname === '/pending') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      const { videoId, title } = (await req.json()) as { videoId?: string; title?: string };
+      if (!videoId) return new Response('videoId required', { status: 400 });
+      await env.STATE.put(`${PENDING_PREFIX}${videoId}`, JSON.stringify({ videoId, title: title ?? videoId }), {
+        expirationTtl: 14 * 86400,
+      });
+      return Response.json({ ok: true });
     }
     if (req.method === 'GET' && url.pathname === '/debug-tick') {
       if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
@@ -69,8 +97,10 @@ async function tick(env: Env): Promise<void> {
   if (activeRaw) {
     const active = JSON.parse(activeRaw) as LiveVideo;
     if (await hasEnded(env, active.videoId)) {
-      console.log(`stream ended, dispatching report: ${active.videoId}`);
-      await dispatchReport(env, active);
+      console.log(`stream ended, queued for the home agent: ${active.videoId}`);
+      await env.STATE.put(`${PENDING_PREFIX}${active.videoId}`, JSON.stringify(active), {
+        expirationTtl: 14 * 86400,
+      });
       await env.STATE.delete('active');
     }
     return;
@@ -283,19 +313,16 @@ async function hasEnded(env: Env, videoId: string): Promise<boolean> {
   return Boolean(video.liveStreamingDetails?.actualEndTime);
 }
 
-async function dispatchReport(env: Env, live: LiveVideo): Promise<void> {
-  const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      accept: 'application/vnd.github+json',
-      'content-type': 'application/json',
-      'user-agent': 'potus-live-bot-worker',
-    },
-    body: JSON.stringify({
-      event_type: 'stream-ended',
-      client_payload: { video_id: live.videoId, title: live.title },
-    }),
-  });
-  if (!res.ok) throw new Error(`repository_dispatch ${res.status}: ${await res.text()}`);
+async function listPending(env: Env): Promise<LiveVideo[]> {
+  const pending: LiveVideo[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.STATE.list({ prefix: PENDING_PREFIX, cursor });
+    for (const key of page.keys) {
+      const raw = await env.STATE.get(key.name);
+      if (raw) pending.push(JSON.parse(raw) as LiveVideo);
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return pending;
 }

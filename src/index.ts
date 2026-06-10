@@ -1,4 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
+import { runAgentPass, WorkerAgentClient } from './agent.js';
 import { Analyzer } from './analysis/analyzer.js';
 import { getQuotes } from './analysis/quotes.js';
 import { Transcriber } from './asr/gemini.js';
@@ -26,6 +27,7 @@ let activeCapture: CaptureHandle | null = null;
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const replayIdx = argv.indexOf('--replay');
+  const agentMode = argv.includes('--agent');
   const noDiscord = argv.includes('--no-discord');
 
   const env: Record<string, string | undefined> = { ...process.env };
@@ -81,6 +83,12 @@ async function main(): Promise<void> {
       { title: argValue(argv, '--title'), url: argValue(argv, '--url') },
       sessionDeps,
     );
+    await notifier.stop();
+    return;
+  }
+
+  if (agentMode) {
+    await runAgent(config, sessionDeps);
     await notifier.stop();
     return;
   }
@@ -219,6 +227,42 @@ async function runReplay(
     { videoId, title: meta.title ?? `Replay：${source}`, videoUrl: meta.url ?? source },
     sessionDeps(videoId, (onPcm) => captureFile(input, onPcm)),
   );
+}
+
+async function runAgent(
+  config: Config,
+  sessionDeps: (videoId: string, startCapture: PipelineDeps['startCapture']) => PipelineDeps,
+): Promise<void> {
+  if (!config.subscriptionsUrl || !config.subscriptionsSecret) {
+    throw new Error('--agent 需要 SUBSCRIPTIONS_URL + SUBSCRIPTIONS_SECRET');
+  }
+  const client = new WorkerAgentClient(config.subscriptionsUrl, config.subscriptionsSecret);
+  const seen = new SeenStore(config.dataDir);
+  console.log(`[agent] 啟動：每 ${config.pollIntervalSec}s 向 Worker 領取待辦場次`);
+
+  const processStream = async (meta: SessionMeta): Promise<void> => {
+    const input = await resolveReplaySource(meta.videoUrl);
+    const result = await runLiveSession(
+      meta,
+      sessionDeps(meta.videoId, (onPcm) => captureFile(input, onPcm)),
+    );
+    if (result !== 'completed') throw new Error('session aborted');
+  };
+
+  while (!shuttingDown) {
+    try {
+      await runAgentPass({
+        client,
+        isDone: (id) => seen.isSeen(`done:${id}`),
+        process: processStream,
+        markDone: (id) => seen.markSeen(`done:${id}`),
+      });
+    } catch (err) {
+      console.error('[agent] 領取待辦失敗：', err);
+    }
+    if (shuttingDown) break;
+    await sleep(config.pollIntervalSec * 1000);
+  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

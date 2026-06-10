@@ -13,7 +13,6 @@
   <a href="https://github.com/TakalaWang/potus-live-bot/actions/workflows/ci.yml"><img src="https://github.com/TakalaWang/potus-live-bot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white" alt="Node >= 20">
-  <img src="https://img.shields.io/badge/cost-%240%2Fmonth-success" alt="$0/month">
 </p>
 
 <p align="center">
@@ -28,7 +27,6 @@
 - **AI transcription** — silero-VAD strips silence, Gemini transcribes the speech verbatim
 - **Post-stream report** — summary, key points, and stock watch suggestions with live Yahoo Finance quotes, plus the full transcript as a `.txt` attachment
 - **Multi-server** — any admin invites the bot and picks a channel with `/subscribe`; no per-server setup on the operator side
-- **Serverless and free** — Cloudflare Workers + GitHub Actions + free-tier APIs; no always-on machine anywhere
 
 > Stock suggestions are AI-generated, for reference only, and do not constitute investment advice.
 
@@ -67,20 +65,19 @@ Discord /subscribe ──► Cloudflare Worker /interactions (Ed25519 verified)
 1-min cron ──► YouTube Data API (official; immune to IP bot-checks)
                             │
         live start ──► REST fan-out notification to subscribed channels
-        stream end  ──► GitHub repository_dispatch
+        stream end  ──► queued in the Worker's KV
                             │
-GitHub Actions: yt-dlp downloads the VOD audio → silero-VAD → Gemini ASR
-→ Gemini analysis → yahoo-finance2 quotes → report fan-out
-(3 attempts on fresh runner IPs; Discord alert on final failure)
+Home agent (polls /pending): yt-dlp downloads the VOD audio → silero-VAD
+→ Gemini ASR → Gemini analysis → yahoo-finance2 quotes → report fan-out
 ```
 
-Detection runs every minute on a Cloudflare Worker. The heavy lifting (audio download, VAD, transcription, analysis) happens in a one-shot GitHub Actions job after the stream ends, so nothing needs to stay running — and nothing costs money.
+Detection, notifications, and subscriptions run on a free Cloudflare Worker via the official YouTube Data API, which is immune to IP bot-checks. The audio download and transcription run on a small **home agent** — any always-on machine on a residential network (a Raspberry Pi, an old laptop). This split exists because YouTube aggressively bot-checks datacenter IPs (GitHub Actions, AWS, etc.) when downloading video; a residential IP sails through. The agent is idle between streams and processes a VOD only after the stream ends, so it stays light, and the queue lives in the Worker's KV — it survives reboots.
 
-(A legacy 24/7 single-process mode with real-time transcription also exists for self-hosting — see [Configuration](#configuration).)
+A legacy all-in-one 24/7 mode with real-time transcription also exists (`node dist/index.js` with no flags) if you'd rather run the whole thing on one residential-IP machine.
 
 ## Deploy your own
 
-You need five free accounts/keys: a [Discord application](https://discord.com/developers/applications), a YouTube Data API key ([Google Cloud](https://console.cloud.google.com), enable *YouTube Data API v3*), a [Cloudflare](https://dash.cloudflare.com) account, a Gemini API key ([AI Studio](https://aistudio.google.com)), and a public GitHub fork of this repo.
+You need four free accounts/keys — a [Discord application](https://discord.com/developers/applications), a YouTube Data API key ([Google Cloud](https://console.cloud.google.com), enable *YouTube Data API v3*), a [Cloudflare](https://dash.cloudflare.com) account, a Gemini API key ([AI Studio](https://aistudio.google.com)) — plus an always-on machine on a residential network for the agent.
 
 **1. Discord app** — from the Developer Portal grab the **bot token**, **application id**, and **public key**, then register the slash commands:
 
@@ -88,7 +85,7 @@ You need five free accounts/keys: a [Discord application](https://discord.com/de
 DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... pnpm register-commands
 ```
 
-**2. Deploy the Worker** — also create a [fine-grained PAT](https://github.com/settings/personal-access-tokens) (this repo only, *Contents: read & write*) so the Worker can trigger the report workflow:
+**2. Deploy the Worker:**
 
 ```bash
 cd worker
@@ -99,17 +96,14 @@ pnpm exec wrangler secret put YOUTUBE_API_KEY
 pnpm exec wrangler secret put DISCORD_BOT_TOKEN
 pnpm exec wrangler secret put DISCORD_PUBLIC_KEY
 pnpm exec wrangler secret put SUBSCRIPTIONS_SECRET   # any long random string
-pnpm exec wrangler secret put GITHUB_TOKEN           # the fine-grained PAT
 pnpm exec wrangler deploy                            # prints your workers.dev URL
 ```
 
-Also set `GITHUB_REPO` (your fork) and, for a different channel, `CHANNEL_ID` in `wrangler.toml`.
+For a different channel, set `CHANNEL_ID` in `wrangler.toml`.
 
 **3. Connect Discord** — Developer Portal → General Information → **Interactions Endpoint URL** → `https://<your-worker>.workers.dev/interactions`.
 
-**4. GitHub Actions secrets** — in your fork's Settings → Secrets → Actions, add `DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL` (the workers.dev URL), `SUBSCRIPTIONS_SECRET` (same value as the Worker secret), and optionally `DISCORD_WEBHOOK_URL` for failure alerts.
-
-**5. Test** — Actions → `stream-report` → *Run workflow* with any past stream's `video_id`; the report should reach your subscribed channel in ~10–30 minutes.
+**4. Deploy the home agent** — on a Raspberry Pi, old laptop, or any always-on residential-IP machine. See **[deploy/README.md](deploy/README.md)** for the systemd setup; the agent needs `DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `SUBSCRIPTIONS_URL` (`https://<your-worker>.workers.dev/subscriptions`), and `SUBSCRIPTIONS_SECRET`.
 
 ## Development
 
@@ -147,9 +141,10 @@ node dist/index.js --replay path/to/video.mp4 --no-discord
 
 ## Limitations
 
-- The VOD download on GitHub Actions can hit YouTube's bot check; the workflow retries on fresh runner IPs (3 attempts) and posts a failure alert with a one-click re-run link.
+- The agent needs a residential (or campus) IP. Datacenter IPs — GitHub Actions, AWS, Oracle, etc. — are bot-checked by YouTube and cannot download the VOD.
 - One stream at a time — if the channel runs concurrent streams, only the first detected one is handled.
 - Streams with archiving disabled (rare) have no VOD to transcribe.
+- The report arrives once the agent next polls after the stream ends (within a minute or two if it's running); the queue waits in the Worker's KV if the agent is offline.
 - Report summary and stock picks are in Traditional Chinese by design; the transcript stays in the original English.
 
 ## Contributing
