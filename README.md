@@ -1,69 +1,97 @@
-# potus-live-bot
+<p align="center">
+  <img src="assets/logo.png" width="140" alt="potus-live-bot logo">
+</p>
 
-A public Discord bot that monitors the White House YouTube channel. Any server admin can invite it and pick a channel:
+<h1 align="center">potus-live-bot</h1>
 
-1. **Live notification** — pushes a message the moment a livestream starts
-2. **Transcription** — silero-VAD filters silence, Gemini transcribes the speech to an English transcript
-3. **Post-stream report** — a Traditional Chinese summary, key points, and stock watch suggestions (with live quotes from Yahoo Finance), delivered with the full transcript attached as `.txt`
+<p align="center">
+  A Discord bot that watches the White House YouTube channel —<br>
+  instant live notifications, AI transcription, and post-stream market analysis.
+</p>
+
+<p align="center">
+  <a href="https://github.com/TakalaWang/potus-live-bot/actions/workflows/ci.yml"><img src="https://github.com/TakalaWang/potus-live-bot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white" alt="Node >= 20">
+  <img src="https://img.shields.io/badge/cost-%240%2Fmonth-success" alt="$0/month">
+</p>
+
+<p align="center">
+  <a href="https://discord.com/oauth2/authorize?client_id=1514254280637284423&scope=bot+applications.commands&permissions=52224&integration_type=0"><b>➕ Invite the bot to your server</b></a>
+</p>
+
+---
+
+## Features
+
+- 🔴 **Live notifications** — a message lands in your channel the moment the White House goes live
+- 🎙️ **AI transcription** — silero-VAD strips silence, Gemini transcribes the speech verbatim
+- 📊 **Post-stream report** — Traditional Chinese summary, key points, and stock watch suggestions with live Yahoo Finance quotes, plus the full transcript as a `.txt` attachment
+- 🌐 **Multi-server** — any admin invites the bot and picks a channel with `/subscribe`; no per-server setup on the operator side
+- 💸 **100% serverless and free** — Cloudflare Workers + GitHub Actions + free-tier APIs; no always-on machine anywhere
 
 > ⚠️ Stock suggestions are AI-generated, for reference only, and do not constitute investment advice.
 
-## Using the bot (server admins)
+## Usage
 
-1. Invite the bot to your server (link in the repo description; requires Manage Server).
-2. Run **`/subscribe channel:#your-channel`** anywhere in the server (requires Manage Server).
-3. That's it. `/unsubscribe` stops notifications for the server.
+1. [Invite the bot](https://discord.com/oauth2/authorize?client_id=1514254280637284423&scope=bot+applications.commands&permissions=52224&integration_type=0) (requires Manage Server).
+2. Run `/subscribe channel:#your-channel` anywhere in the server.
+3. Done — `/unsubscribe` stops notifications.
 
-## Architecture (free serverless deployment)
+## How it works
 
 ```
-┌─ Detection + subscriptions (24/7, free) ────────────────────────┐
-│ Cloudflare Worker                                                │
-│  · 1-min cron polls YouTube Data API (official; no IP bot-check)│
-│  · /interactions — Discord slash commands (/subscribe), Ed25519 │
-│  · subscriptions stored in KV per guild                          │
-│  · live start → REST fan-out notification to subscribed channels│
-│  · stream end (actualEndTime) → GitHub repository_dispatch      │
-└──────────────────────────────────────────────────────────────────┘
-                              ↓ once per stream
-┌─ Report (one-shot job, free on public repos) ────────────────────┐
-│ GitHub Actions: yt-dlp downloads the VOD audio → replay pipeline │
-│ (VAD → Gemini ASR → analysis → quotes) → report fan-out to all   │
-│ subscribed channels. 3 attempts, each on a fresh runner IP.      │
-└──────────────────────────────────────────────────────────────────┘
+Discord /subscribe ──► Cloudflare Worker /interactions (Ed25519 verified)
+                            │  per-guild subscriptions in KV
+                            │
+1-min cron ──► YouTube Data API (official; immune to IP bot-checks)
+                            │
+        live start ──► REST fan-out notification to subscribed channels
+        stream end  ──► GitHub repository_dispatch
+                            │
+GitHub Actions: yt-dlp downloads the VOD audio → silero-VAD → Gemini ASR
+→ Gemini analysis → yahoo-finance2 quotes → report fan-out
+(3 attempts on fresh runner IPs; Discord alert on final failure)
 ```
 
-Deploying your own instance: create a Discord application (bot token + public key), a YouTube Data API key, and a Cloudflare account; deploy `worker/` with wrangler (KV namespace + secrets listed in `worker/wrangler.toml`), set the Discord Interactions Endpoint URL to `<worker>/interactions`, register commands with `pnpm register-commands`, and add the GitHub Actions secrets (`DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL`, `SUBSCRIPTIONS_SECRET`, optional `DISCORD_WEBHOOK_URL` for failure alerts).
+Detection runs every minute on a Cloudflare Worker. The heavy lifting (audio download, VAD, transcription, analysis) happens in a one-shot GitHub Actions job after the stream ends, so nothing needs to stay running — and nothing costs money.
 
-There is also a legacy 24/7 single-process mode (live ingestion with real-time transcription) for self-hosting on a machine with a residential IP — see below.
+There is also a legacy 24/7 single-process mode (`node dist/index.js`) with real-time transcription for self-hosting on a residential-IP machine; YouTube aggressively bot-checks datacenter IPs, which is exactly what the serverless architecture avoids.
+
+## Deploy your own
+
+Everything fits in free tiers: a Discord application, a YouTube Data API key (Google Cloud), a Cloudflare account, a Gemini API key (AI Studio), and a public GitHub repo.
+
+1. **Discord app** — create at the [Developer Portal](https://discord.com/developers/applications): grab the bot token, application id, and public key. Register the commands:
+   ```bash
+   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... pnpm register-commands
+   ```
+2. **Worker** — in `worker/`: `pnpm exec wrangler login`, create the KV namespace (`pnpm exec wrangler kv namespace create STATE`, paste the id into `wrangler.toml`), set the five secrets listed at the top of `wrangler.toml`, then `pnpm exec wrangler deploy`.
+3. **Connect Discord** — set the Interactions Endpoint URL to `https://<your-worker>.workers.dev/interactions`.
+4. **GitHub Actions secrets** — `DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL`, `SUBSCRIPTIONS_SECRET` (same value as the Worker secret), and optionally `DISCORD_WEBHOOK_URL` for failure alerts.
+5. **Test** — Actions → `stream-report` → Run workflow with any past stream's `video_id`.
+
+Monitoring a different channel? Change `CHANNEL_ID` in `worker/wrangler.toml`.
 
 ## Development
 
-Requirements: Node ≥ 20, pnpm, `yt-dlp`, `ffmpeg` (macOS: `brew install yt-dlp ffmpeg deno`).
+Requires Node ≥ 20, [pnpm](https://pnpm.io), `ffmpeg`, and `yt-dlp` (macOS: `brew install yt-dlp ffmpeg deno`).
 
 ```bash
 pnpm install
-pnpm download-model      # silero-vad v6.2 ONNX (2.3MB)
+pnpm download-model     # silero-vad v6.2 ONNX (2.3 MB)
 pnpm build
-pnpm test                # 54 tests
+pnpm test
 pnpm typecheck
 ```
 
-### Replay mode (end-to-end verification)
-
-Feed a past video or local file through the full pipeline as a fake stream:
+Run the full pipeline against any video without waiting for a live stream:
 
 ```bash
-# report printed to stdout; needs GEMINI_API_KEY only
 node dist/index.js --replay path/to/video.mp4 --no-discord
-
-# send to all subscribed channels (multi-server mode)
-SUBSCRIPTIONS_URL=https://your-worker.workers.dev/subscriptions \
-SUBSCRIPTIONS_SECRET=... DISCORD_BOT_TOKEN=... \
-node dist/index.js --replay 'https://www.youtube.com/watch?v=XXXX' --title '...' --url '...'
 ```
 
-## Environment variables
+### Configuration
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -73,25 +101,16 @@ node dist/index.js --replay 'https://www.youtube.com/watch?v=XXXX' --title '...'
 | `SUBSCRIPTIONS_SECRET` | with the above | — | shared secret for the endpoint |
 | `DISCORD_CHANNEL_ID` | single-channel mode | — | legacy fixed-channel alternative |
 | `YOUTUBE_CHANNEL_URL` | | `https://www.youtube.com/@WhiteHouse/live` | 24/7 mode polling target |
-| `POLL_INTERVAL_SEC` | | `60` | 24/7 mode poll interval (≥30) |
+| `POLL_INTERVAL_SEC` | | `60` | 24/7 mode poll interval (≥ 30) |
 | `DATA_DIR` | | `./data` | dedup state and transcripts |
 | `GEMINI_TRANSCRIBE_MODEL` | | `gemini-3.1-flash-lite` | ASR model |
 | `GEMINI_ANALYZE_MODEL` | | `gemini-3.5-flash` | analysis model |
 | `VAD_MODEL_PATH` | | `models/silero_vad.onnx` | silero VAD model path |
 
-## Legacy 24/7 self-host mode
+## Contributing
 
-Runs detection, live audio capture, and real-time background transcription in one long-running process (report ~2 min after stream end instead of ~10–30 min). Needs an always-on machine — **with a residential IP**: YouTube aggressively bot-checks datacenter IPs for yt-dlp traffic (the serverless mode avoids this by using the official Data API for detection and fresh-runner retries for the one-shot VOD download).
+Issues and PRs are welcome. Before submitting, make sure `pnpm test` and `pnpm typecheck` pass; CI runs both on every PR.
 
-```bash
-set -a && source .env && set +a
-node dist/index.js
-```
+## License
 
-Behavior details (both modes): notified video IDs persist for dedup; transcripts append to JSONL as they are produced; failed ASR chunks leave `[轉錄失敗 mm:ss–mm:ss]` markers and are listed in the report; SIGTERM flushes transcripts and reattaches after restart; orphaned transcripts (crash between stream end and report) are recovered at startup.
-
-## Known limitations
-
-- The VOD download on GitHub Actions can hit YouTube's bot check; the workflow retries on fresh runners and alerts on final failure.
-- One stream at a time; if the channel runs concurrent streams, only the first detected one is handled.
-- Report summary and stock suggestions are in Traditional Chinese by design (the transcript stays in the original English).
+[MIT](LICENSE)
