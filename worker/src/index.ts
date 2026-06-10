@@ -31,6 +31,18 @@ export default {
       }
       return Response.json(await listSubscriptions(env));
     }
+    if (req.method === 'GET' && url.pathname === '/debug-tick') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      try {
+        await tick(env);
+        const keys = await env.STATE.list({ prefix: '' });
+        return Response.json({ ok: true, kvKeys: keys.keys.map((k) => k.name) });
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/debug') {
       if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
         return new Response('unauthorized', { status: 401 });
@@ -57,6 +69,7 @@ async function tick(env: Env): Promise<void> {
   if (activeRaw) {
     const active = JSON.parse(activeRaw) as LiveVideo;
     if (await hasEnded(env, active.videoId)) {
+      console.log(`stream ended, dispatching report: ${active.videoId}`);
       await dispatchReport(env, active);
       await env.STATE.delete('active');
     }
@@ -67,6 +80,7 @@ async function tick(env: Env): Promise<void> {
   if (!live) return;
   if (await env.STATE.get(`seen:${live.videoId}`)) return;
 
+  console.log(`live detected: ${live.videoId} ${live.title}`);
   await env.STATE.put(`seen:${live.videoId}`, '1', { expirationTtl: 30 * 86400 });
   await env.STATE.put('active', JSON.stringify(live));
   await notifyLiveStart(env, live);
@@ -220,7 +234,7 @@ async function ytApi<T>(env: Env, path: string, params: Record<string, string>):
   const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   url.searchParams.set('key', env.YOUTUBE_API_KEY);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`YouTube API ${path} ${res.status}: ${await res.text()}`);
   return res.json() as Promise<T>;
 }

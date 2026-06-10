@@ -88,8 +88,6 @@ set -a && source .env && set +a
 node dist/index.js
 ```
 
-Docker / k8s manifests are provided (`Dockerfile`, `k8s/`): single replica + PVC + Secret; see `k8s/secret.example.yaml`. Build with `docker build -t potus-live-bot .`.
-
 Behavior details (both modes): notified video IDs persist for dedup; transcripts append to JSONL as they are produced; failed ASR chunks leave `[轉錄失敗 mm:ss–mm:ss]` markers and are listed in the report; SIGTERM flushes transcripts and reattaches after restart; orphaned transcripts (crash between stream end and report) are recovered at startup.
 
 ## Known limitations
