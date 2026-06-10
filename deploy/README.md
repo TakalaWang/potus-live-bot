@@ -42,7 +42,29 @@ sudo journalctl -u potus-agent -f      # watch it work
 
 ## macOS (launchd)
 
-If you'd rather run it on a Mac, the same `node dist/index.js --agent` command works. Wrap it in a launchd plist with `KeepAlive` so it restarts on crash and at login. The Mac only needs to be powered on at some point after a stream ends — the queue waits.
+`scripts/run-agent.sh` loads `.env` and puts Homebrew tools on PATH; a launchd agent runs it with `KeepAlive` (restarts on crash and at login).
+
+```bash
+# 1. config — create .env in the repo root
+cat > .env <<'EOF'
+DISCORD_BOT_TOKEN=your-bot-token
+GEMINI_API_KEY=your-gemini-key
+SUBSCRIPTIONS_URL=https://your-worker.workers.dev/subscriptions
+SUBSCRIPTIONS_SECRET=same-secret-as-the-worker
+EOF
+
+# 2. install the launchd agent (edit the /PATH/TO/ placeholders first)
+cp deploy/com.potus-agent.plist.example ~/Library/LaunchAgents/com.potus-agent.plist
+# replace /PATH/TO/potus-live-bot with your actual checkout path in the plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.potus-agent.plist
+
+# 3. watch it
+tail -f data/agent.log
+```
+
+Manage it: `launchctl bootout gui/$(id -u)/com.potus-agent` to stop, `launchctl kickstart -k gui/$(id -u)/com.potus-agent` to restart after a rebuild.
+
+A launchd *agent* runs only while you're logged in and pauses while the Mac sleeps — fine for a trial run, but a Raspberry Pi (above) is better for unattended 24/7 use.
 
 ## Verifying
 
