@@ -1,100 +1,100 @@
-# potus-live-bot 設計文件
+# potus-live-bot Design Document
 
-日期：2026-06-10
-狀態：已確認
+Date: 2026-06-10
+Status: Approved
 
-## 目標
+## Goal
 
-一個 Discord bot，監測白宮 YouTube 頻道：
+A Discord bot that monitors the White House YouTube channel:
 
-1. **開播偵測**：頻道開直播時立即發 Discord 通知。
-2. **背景轉錄**：直播期間拉取音訊，VAD 過濾靜音，有聲段落用 Gemini 做 ASR，逐字稿持久化於磁碟（直播中不發訊息）。
-3. **結束後報告**：直播結束後，用 Gemini 對全文產出繁體中文摘要與股票購買建議（結合 yahoo-finance2 即時行情），連同英文逐字稿 `.txt` 附件推播到 Discord。
+1. **Live detection**: push a Discord notification the moment the channel goes live.
+2. **Background transcription**: pull the live audio, filter silence with VAD, transcribe speech segments with Gemini, persist the transcript to disk (no messages during the stream).
+3. **Post-stream report**: after the stream ends, use Gemini to produce a Traditional Chinese summary and stock suggestions (combined with live quotes from yahoo-finance2), pushed to Discord together with the English transcript as a `.txt` attachment.
 
-## 已確認的決策
+## Confirmed decisions
 
-| 決策 | 選擇 |
+| Decision | Choice |
 |---|---|
-| 技術棧 | Node.js / TypeScript |
-| Discord | discord.js v14 完整 bot（非 webhook），純推播、無 slash commands |
-| 開播偵測 | yt-dlp 輪詢 `youtube.com/@WhiteHouse/live`（每 60 秒） |
-| 轉錄呈現 | 背景轉錄，結束後一次發報告 |
-| 講者辨識 | 不做 speaker diarization，完整逐字稿即可 |
-| ASR | Gemini（`gemini-2.5-flash`），WAV inline data |
-| VAD | silero-vad（onnxruntime-node，CPU） |
-| 股票建議 | Gemini structured output 分析 + yahoo-finance2 即時行情 |
-| 報告語言 | 繁體中文（逐字稿保留英文原文） |
-| 部署 | Docker 多階段建置 + k8s 單 replica Deployment |
+| Stack | Node.js / TypeScript |
+| Discord | discord.js v14 full bot (not a webhook), push-only, no slash commands |
+| Live detection | yt-dlp polling `youtube.com/@WhiteHouse/live` (every 60s) |
+| Transcript delivery | background transcription, single report after the stream |
+| Speaker identification | no diarization — full transcript is sufficient |
+| ASR | Gemini (`gemini-2.5-flash`), WAV inline data |
+| VAD | silero-vad (onnxruntime-node, CPU) |
+| Stock suggestions | Gemini structured output analysis + yahoo-finance2 live quotes |
+| Report language | Traditional Chinese (transcript stays in original English) |
+| Deployment | multi-stage Docker build + single-replica k8s Deployment |
 
-## 架構
+## Architecture
 
-單一 Node.js 長駐程序，四個模組依直播生命週期串接：
+A single long-running Node.js process; four modules chained along the stream lifecycle:
 
 ```
-Watcher (yt-dlp 輪詢) ──偵測到直播──▶ AudioIngest (yt-dlp+ffmpeg → 16kHz PCM)
-   │                                        │
-   │ 開播通知                                ▼
-   ▼                                  VAD (silero) ──有聲段──▶ Chunker ──WAV──▶ Gemini ASR
-Discord 推播                                                                       │
-   ▲                                                                              ▼
-   │                                                                      逐字稿 JSONL（磁碟）
-   └──結束後報告（摘要+股票建議+逐字稿附件）── PostAnalysis (Gemini + yahoo-finance2) ◀──直播結束
+Watcher (yt-dlp polling) ──live detected──▶ AudioIngest (yt-dlp+ffmpeg → 16kHz PCM)
+   │                                              │
+   │ live notification                            ▼
+   ▼                                        VAD (silero) ──speech──▶ Chunker ──WAV──▶ Gemini ASR
+Discord push                                                                            │
+   ▲                                                                                    ▼
+   │                                                                          transcript JSONL (disk)
+   └──post-stream report (summary+stocks+transcript)── PostAnalysis (Gemini + yahoo-finance2) ◀──stream end
 ```
 
-## 資料流細節
+## Data flow details
 
-- **音訊**：ffmpeg 輸出 16kHz / 16-bit / mono PCM。
-- **VAD**：silero-vad 以 512 樣本（32ms）為單位；語音段前後各 300ms padding；間隔 < 1 秒合併為同段。
-- **Chunk flush**：累積滿 45 秒語音量，或距上次送出超過 3 分鐘，打包 WAV 丟 Gemini。
-- **時間戳**：由 PCM byte offset 推算直播相對時間。
-- **持久化**：轉錄結果即時 append 至 JSONL（`{start, end, text}`），程序掛掉不丟已轉錄內容。
+- **Audio**: ffmpeg outputs 16kHz / 16-bit / mono PCM.
+- **VAD**: silero-vad scores 512-sample (32ms) frames; 300ms padding around speech segments; gaps < 1s merge into the same segment.
+- **Chunk flush**: pack accumulated speech into a WAV and send to Gemini once 45 seconds of speech accumulate, or 3 minutes have passed since the last flush.
+- **Timestamps**: derived from PCM byte offsets, relative to the stream.
+- **Persistence**: transcription results append to a JSONL file (`{start, end, text}`) immediately; a crash loses no transcribed content.
 
-## 直播結束偵測
+## Stream-end detection
 
-ffmpeg 串流結束後重試重連 3 次（共約 2 分鐘）；若重連失敗且 `/live` 已查不到該 video ID，判定結束，觸發 PostAnalysis。
+When the ffmpeg stream ends, retry the reconnect (transient HLS drops are common); the stream is declared over only when `/live` definitively no longer lists this video ID. Transient query errors are retried with backoff and never treated as stream end.
 
-## 錯誤處理
+## Error handling
 
-- **Gemini 失敗**：指數退避重試 3 次；仍失敗則丟棄該 chunk，逐字稿留 `[轉錄失敗 mm:ss–mm:ss]` 標記，不中斷管線。
-- **程序重啟**：已通知的 video ID 持久化；重啟後不重複通知；直播仍進行中則重新接上（中斷期間內容遺失，報告註明）。
-- **Discord 發送失敗**：重試 3 次，最終失敗記 log、不致命。
+- **Gemini failure**: exponential backoff retries; if a chunk still fails it is dropped with a `[轉錄失敗 mm:ss–mm:ss]` marker in the transcript — the pipeline never stops.
+- **Process restart**: notified video IDs persist; no duplicate notification after restart; if the stream is still live the bot reattaches (the gap is lost and noted in the report).
+- **Discord send failure**: 3 retries; final failure is logged, not fatal.
 
-## PostAnalysis 兩階段
+## PostAnalysis, two stages
 
-1. 全文丟 Gemini（structured output）→ 繁中摘要、重點條列、受影響標的清單（ticker、看多/看空、理由、信心度）。
-2. `yahoo-finance2` 查每個 ticker 現價與當日漲跌幅，組進報告。
+1. Full transcript → Gemini (structured output) → zh-TW summary, key points, affected tickers (ticker, bullish/bearish, reason, confidence).
+2. `yahoo-finance2` quote lookup for each ticker (price, day change) merged into the report.
 
-報告以 Discord embed 發送，逐字稿 `.txt` 附件，結尾固定附投資風險免責聲明。
+The report is sent as Discord embeds, the transcript as a `.txt` attachment, with a fixed investment-risk disclaimer at the end.
 
-## 專案結構
+## Project structure
 
 ```
 src/
-├── index.ts             # 進入點：載入設定、啟動 Watcher
-├── config.ts            # 環境變數驗證
-├── watcher.ts           # yt-dlp 輪詢偵測開播
-├── pipeline.ts          # 單場直播生命週期協調器
+├── index.ts             # entry point: load config, start watcher
+├── config.ts            # env var validation
+├── watcher.ts           # yt-dlp live detection polling
+├── pipeline.ts          # per-stream lifecycle orchestrator
 ├── audio/
 │   ├── ingest.ts        # spawn yt-dlp+ffmpeg → PCM stream
-│   ├── vad.ts           # silero-vad（onnxruntime-node）
-│   └── chunker.ts       # 語音段累積、打包 WAV
+│   ├── vad.ts           # silero-vad (onnxruntime-node)
+│   └── chunker.ts       # speech segment accumulation, WAV packing
 ├── asr/gemini.ts        # Gemini ASR
 ├── analysis/
-│   ├── analyzer.ts      # Gemini 摘要+股票分析（structured output）
-│   └── quotes.ts        # yahoo-finance2 行情
-├── discord/notifier.ts  # discord.js 推播、embed 組裝
-└── state.ts             # video ID 去重、逐字稿 JSONL 持久化
+│   ├── analyzer.ts      # Gemini summary + stock analysis (structured output)
+│   └── quotes.ts        # yahoo-finance2 quotes
+├── discord/notifier.ts  # discord.js push, embed assembly
+└── state.ts             # video ID dedup, transcript JSONL persistence
 ```
 
-## 設定（環境變數）
+## Configuration (env vars)
 
-`DISCORD_BOT_TOKEN`、`DISCORD_CHANNEL_ID`、`GEMINI_API_KEY`、`YOUTUBE_CHANNEL_URL`（預設白宮頻道）、`POLL_INTERVAL_SEC`（預設 60）、`DATA_DIR`（預設 `./data`）。
+`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `GEMINI_API_KEY`, `YOUTUBE_CHANNEL_URL` (defaults to the White House channel), `POLL_INTERVAL_SEC` (default 60), `DATA_DIR` (default `./data`).
 
-## 測試策略
+## Test strategy
 
-- **單元測試**（vitest）：chunker 切段/合併/flush 規則（合成 PCM）、逐字稿持久化、報告排版、分析 schema 驗證（mock Gemini）。
-- **Replay 模式**：`--replay <影片檔或YouTube網址>` 把歷史影片當假直播灌入完整管線，端到端驗證 VAD→ASR→分析→Discord，不需等真直播。
+- **Unit tests** (vitest): chunker segmentation/merge/flush rules (synthetic PCM), transcript persistence, report formatting, analysis schema validation (mocked Gemini).
+- **Replay mode**: `--replay <file or YouTube URL>` feeds a past video through the full pipeline as a fake livestream, verifying VAD→ASR→analysis→Discord end to end without waiting for a real broadcast.
 
-## 部署
+## Deployment
 
-多階段 Dockerfile（`node:22-slim` + ffmpeg + yt-dlp standalone binary）；k8s 單 replica Deployment + Secret（tokens）+ PVC 掛 `DATA_DIR`。
+Multi-stage Dockerfile (`node:22-bookworm-slim` + ffmpeg + standalone yt-dlp binary); k8s single-replica Deployment + Secret (tokens) + PVC mounted at `DATA_DIR`.

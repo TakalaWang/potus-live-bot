@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 注意：onnxruntime-node 只有 glibc 預編譯檔，不能用 Alpine（musl）
+# Note: onnxruntime-node ships glibc prebuilds only — Alpine (musl) is not supported
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -14,12 +14,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates unzip \
   && rm -rf /var/lib/apt/lists/*
 
-# yt-dlp standalone binary（不依賴 Python，可用 yt-dlp -U 自我更新）
+# yt-dlp standalone binary (no Python dependency, self-updates via yt-dlp -U)
 RUN BIN=yt-dlp_linux; [ "$TARGETARCH" = "arm64" ] && BIN=yt-dlp_linux_aarch64; \
   curl -fL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$BIN" -o /usr/local/bin/yt-dlp \
   && chmod +x /usr/local/bin/yt-dlp
 
-# deno：yt-dlp 解 YouTube JS challenge 必需（沒有它擷取會劣化或失敗）
+# deno: required by yt-dlp to solve YouTube JS challenges (extraction degrades or fails without it)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 WORKDIR /app

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 下載 silero-vad v6.2 ONNX 模型（2.3 MB，MIT license）
+# Download the silero-vad v6.2 ONNX model (2.3 MB, MIT license)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p models

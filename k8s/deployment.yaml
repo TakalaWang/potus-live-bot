@@ -4,9 +4,9 @@ metadata:
   name: potus-live-bot
   namespace: potus-live-bot
 spec:
-  replicas: 1 # 必須單 replica：多個實例會重複通知與重複轉錄
+  replicas: 1 # must stay 1: multiple instances would duplicate notifications and transcription
   strategy:
-    type: Recreate # 避免新舊 pod 同時抓流
+    type: Recreate # avoid old and new pods pulling the stream simultaneously
   selector:
     matchLabels:
       app: potus-live-bot
@@ -15,9 +15,10 @@ spec:
       labels:
         app: potus-live-bot
     spec:
+      terminationGracePeriodSeconds: 300 # allow ASR queue to drain on SIGTERM
       containers:
         - name: bot
-          image: potus-live-bot:latest # 換成你的 registry
+          image: potus-live-bot:latest # replace with your registry
           envFrom:
             - secretRef:
                 name: potus-live-bot-secrets
