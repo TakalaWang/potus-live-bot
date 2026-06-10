@@ -1,0 +1,21 @@
+# Secrets (set via `wrangler secret put <NAME>`):
+#   YOUTUBE_API_KEY     - Google Cloud API key with YouTube Data API v3 enabled
+#   DISCORD_WEBHOOK_URL - Discord channel webhook for live notifications
+#   GITHUB_TOKEN        - fine-grained PAT, this repo only, Contents: read & write
+name = "potus-live-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# White House channel id (find it via the channel page source or https://www.youtube.com/account_advanced)
+CHANNEL_ID = "PASTE_CHANNEL_ID_HERE"
+# owner/repo of this project on GitHub
+GITHUB_REPO = "YOUR_GITHUB_USERNAME/potus-live-bot"
+
+[[kv_namespaces]]
+binding = "STATE"
+# create with: wrangler kv namespace create STATE
+id = "PASTE_KV_NAMESPACE_ID_HERE"

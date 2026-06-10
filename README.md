@@ -59,6 +59,10 @@ npm test            # vitest (52 tests; VAD tests need download-model first)
 npm run typecheck
 ```
 
+## Free serverless deployment (no server needed)
+
+If you don't have an always-on machine, see **[docs/free-deployment.md](docs/free-deployment.md)**: a Cloudflare Worker (free) detects streams via the official YouTube Data API and notifies Discord instantly; when the stream ends it triggers a GitHub Actions job (free on public repos) that downloads the VOD and runs the same pipeline to deliver the report. Zero monthly cost; the report arrives ~10–30 min after the stream instead of ~2 min.
+
 ## Docker / k8s deployment
 
 ```bash

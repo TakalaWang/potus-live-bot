@@ -1,0 +1,71 @@
+name: Run stream report
+description: Download VOD audio and run the transcription/analysis pipeline
+inputs:
+  video_id:
+    description: YouTube video id of the ended stream
+    required: true
+  title:
+    description: Stream title
+    required: true
+  discord_bot_token:
+    required: true
+  discord_channel_id:
+    required: true
+  gemini_api_key:
+    required: true
+runs:
+  using: composite
+  steps:
+    # client_payload is attacker-settable if the dispatch PAT ever leaks — validate before use
+    - name: Validate video id
+      shell: bash
+      env:
+        VIDEO_ID: ${{ inputs.video_id }}
+      run: |
+        if ! [[ "$VIDEO_ID" =~ ^[A-Za-z0-9_-]{6,20}$ ]]; then
+          echo "invalid video_id: $VIDEO_ID" >&2
+          exit 1
+        fi
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+
+    - name: Install ffmpeg, yt-dlp, deno
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ffmpeg
+        sudo curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp
+        sudo chmod +x /usr/local/bin/yt-dlp
+        curl -fsSL https://deno.land/install.sh | sh
+        echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+    - name: Build
+      shell: bash
+      run: |
+        npm ci
+        npm run download-model
+        npm run build
+
+    - name: Download VOD audio
+      shell: bash
+      env:
+        VIDEO_ID: ${{ inputs.video_id }}
+      run: |
+        yt-dlp -f "bestaudio/worst[acodec!=none]" --retries 5 -o audio.m4a \
+          "https://www.youtube.com/watch?v=${VIDEO_ID}"
+
+    - name: Run pipeline and send report
+      shell: bash
+      env:
+        DISCORD_BOT_TOKEN: ${{ inputs.discord_bot_token }}
+        DISCORD_CHANNEL_ID: ${{ inputs.discord_channel_id }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        VIDEO_ID: ${{ inputs.video_id }}
+        STREAM_TITLE: ${{ inputs.title }}
+      run: |
+        node dist/index.js --replay ./audio.m4a \
+          --title "$STREAM_TITLE" \
+          --url "https://www.youtube.com/watch?v=${VIDEO_ID}"

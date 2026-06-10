@@ -78,7 +78,11 @@ async function main(): Promise<void> {
   if (replayIdx !== -1) {
     const source = argv[replayIdx + 1];
     if (!source) throw new Error('--replay 需要本地影片檔路徑或 YouTube 網址');
-    await runReplay(source, sessionDeps);
+    await runReplay(
+      source,
+      { title: argValue(argv, '--title'), url: argValue(argv, '--url') },
+      sessionDeps,
+    );
     await notifier.stop();
     return;
   }
@@ -178,15 +182,21 @@ async function recoverOrphans(config: Config, seen: SeenStore, postDeps: PostAna
   }
 }
 
+function argValue(argv: string[], flag: string): string | undefined {
+  const idx = argv.indexOf(flag);
+  return idx !== -1 ? argv[idx + 1] : undefined;
+}
+
 async function runReplay(
   source: string,
+  meta: { title?: string; url?: string },
   sessionDeps: (videoId: string, startCapture: PipelineDeps['startCapture']) => PipelineDeps,
 ): Promise<void> {
   const videoId = `replay-${source.replace(/[^A-Za-z0-9_-]/g, '').slice(-20) || 'local'}`;
   console.log(`[replay] 來源：${source}（session：${videoId}）`);
   const input = await resolveReplaySource(source);
   await runLiveSession(
-    { videoId, title: `Replay：${source}`, videoUrl: source },
+    { videoId, title: meta.title ?? `Replay：${source}`, videoUrl: meta.url ?? source },
     sessionDeps(videoId, (onPcm) => captureFile(input, onPcm)),
   );
 }
