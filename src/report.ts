@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import type { AnalysisResult, StockPick, StockQuote } from './types.js';
+import type { AnalysisResult, MarketImpact, StockQuote } from './types.js';
 
 export const DISCLAIMER = '本報告由 AI 自動生成，僅供參考，不構成投資建議；投資有風險，請自行判斷。';
 
@@ -48,17 +48,19 @@ export function buildReport(
   summary.addFields(summaryFields.slice(0, MAX_FIELDS));
 
   const embeds = [summary];
-  if (analysis.stockPicks.length > 0) {
+  if (analysis.marketImpacts.length > 0) {
     const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
-    const stocks = new EmbedBuilder().setColor(0xfee75c).setTitle('💹 股票觀察與建議');
-    stocks.addFields(
-      analysis.stockPicks.slice(0, MAX_FIELDS).map((pick) => ({
-        name: truncate(pickTitle(pick), FIELD_NAME_LIMIT),
-        value: truncate(pickValue(pick, quoteMap.get(pick.ticker)), FIELD_VALUE_LIMIT),
+    const market = new EmbedBuilder()
+      .setColor(0xfee75c)
+      .setTitle('💹 市場觀察｜受影響領域與方向（非個股推薦）');
+    market.addFields(
+      analysis.marketImpacts.slice(0, MAX_FIELDS).map((impact) => ({
+        name: truncate(impactTitle(impact), FIELD_NAME_LIMIT),
+        value: truncate(impactValue(impact, quoteMap), FIELD_VALUE_LIMIT),
         inline: false,
       })),
     );
-    embeds.push(stocks);
+    embeds.push(market);
   }
   embeds[embeds.length - 1].setFooter({ text: DISCLAIMER });
 
@@ -70,17 +72,24 @@ export function buildReport(
   return embeds;
 }
 
-function pickTitle(pick: StockPick): string {
-  const dir = pick.direction === 'bullish' ? '📈 看多' : '📉 看空';
-  const conf = { high: '高', medium: '中', low: '低' }[pick.confidence] ?? pick.confidence;
-  return `${dir}｜${pick.ticker}（信心：${conf}）`;
+function impactTitle(impact: MarketImpact): string {
+  const dir = impact.direction === 'bullish' ? '📈 利多' : '📉 利空';
+  const conf = { high: '高', medium: '中', low: '低' }[impact.confidence] ?? impact.confidence;
+  return `${dir}｜${impact.theme}（信心：${conf}）`;
 }
 
-function pickValue(pick: StockPick, quote: StockQuote | undefined): string {
-  const priceLine = quote
-    ? `${quote.name}：${quote.price} ${quote.currency}（${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%）`
-    : '行情查詢失敗';
-  return `${priceLine}\n${pick.reason}`;
+function impactValue(impact: MarketImpact, quoteMap: Map<string, StockQuote>): string {
+  const lines = [`發言原文：「${impact.quote}」`, impact.reason];
+  if (impact.exampleTickers.length > 0) {
+    const tickers = impact.exampleTickers.map((t) => {
+      const q = quoteMap.get(t.trim().toUpperCase());
+      return q
+        ? `${t}（${q.price} ${q.currency}，${q.changePercent >= 0 ? '+' : ''}${q.changePercent.toFixed(2)}%）`
+        : `${t}（行情查詢失敗）`;
+    });
+    lines.push(`相關類股／ETF：${tickers.join('、')}`);
+  }
+  return lines.join('\n');
 }
 
 function chunkLines(lines: string[]): string[] {

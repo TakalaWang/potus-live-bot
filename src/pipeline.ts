@@ -142,7 +142,7 @@ export async function runPostAnalysis(
 
   let analysis: AnalysisResult;
   if (!text.trim()) {
-    analysis = { summaryZh: '（整場直播未偵測到語音內容）', keyPoints: [], stockPicks: [] };
+    analysis = { summaryZh: '（整場直播未偵測到語音內容）', keyPoints: [], marketImpacts: [] };
   } else {
     try {
       analysis = await deps.analyzer.analyze(text);
@@ -151,19 +151,20 @@ export async function runPostAnalysis(
       analysis = {
         summaryZh: `（AI 分析失敗：${(err as Error).message}）完整逐字稿見附件。`,
         keyPoints: [],
-        stockPicks: [],
+        marketImpacts: [],
       };
     }
   }
 
-  for (const pick of analysis.stockPicks) {
-    pick.ticker = pick.ticker.trim().toUpperCase();
+  for (const impact of analysis.marketImpacts) {
+    impact.exampleTickers = impact.exampleTickers.map((t) => t.trim().toUpperCase());
   }
 
   let quotes: StockQuote[] = [];
-  if (analysis.stockPicks.length > 0) {
+  const tickers = [...new Set(analysis.marketImpacts.flatMap((m) => m.exampleTickers))];
+  if (tickers.length > 0) {
     try {
-      quotes = await deps.getQuotes([...new Set(analysis.stockPicks.map((p) => p.ticker))]);
+      quotes = await deps.getQuotes(tickers);
     } catch (err) {
       console.warn('[pipeline] 行情查詢失敗：', err);
     }

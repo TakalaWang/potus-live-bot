@@ -16,17 +16,19 @@ export interface VadFrame {
   startSample: number;
 }
 
-export interface StockPick {
-  ticker: string;
+export interface MarketImpact {
+  theme: string;
   direction: 'bullish' | 'bearish';
+  quote: string;
   reason: string;
+  exampleTickers: string[];
   confidence: 'high' | 'medium' | 'low';
 }
 
 export interface AnalysisResult {
   summaryZh: string;
   keyPoints: string[];
-  stockPicks: StockPick[];
+  marketImpacts: MarketImpact[];
 }
 
 export interface StockQuote {

@@ -5,15 +5,30 @@ import type { AnalysisResult, StockQuote } from '../src/types.js';
 const ANALYSIS: AnalysisResult = {
   summaryZh: '川普宣布對進口晶片課徵新關稅，並批評聯準會利率政策。',
   keyPoints: ['宣布晶片關稅 25%', '施壓聯準會降息', '提及能源政策鬆綁'],
-  stockPicks: [
-    { ticker: 'NVDA', direction: 'bearish', reason: '晶片關稅推高成本', confidence: 'high' },
-    { ticker: 'XOM', direction: 'bullish', reason: '能源鬆綁利多', confidence: 'medium' },
+  marketImpacts: [
+    {
+      theme: '半導體製造',
+      direction: 'bearish',
+      quote: 'a twenty five percent tariff on all imported semiconductors',
+      reason: '對進口晶片課徵 25% 關稅，推升依賴海外製造的晶片業者成本',
+      exampleTickers: ['SOXX', 'SMH'],
+      confidence: 'high',
+    },
+    {
+      theme: '傳統能源',
+      direction: 'bullish',
+      quote: 'we will approve new drilling permits immediately',
+      reason: '立即核發鑽探許可，利多油氣探勘與生產類股',
+      exampleTickers: ['XLE'],
+      confidence: 'medium',
+    },
   ],
 };
 
 const QUOTES: StockQuote[] = [
-  { symbol: 'NVDA', name: 'NVIDIA Corporation', price: 1250.5, changePercent: -2.34, currency: 'USD', marketState: 'REGULAR' },
-  { symbol: 'XOM', name: 'Exxon Mobil', price: 118.2, changePercent: 1.05, currency: 'USD', marketState: 'REGULAR' },
+  { symbol: 'SOXX', name: 'iShares Semiconductor ETF', price: 245.5, changePercent: -2.34, currency: 'USD', marketState: 'REGULAR' },
+  { symbol: 'SMH', name: 'VanEck Semiconductor ETF', price: 312.8, changePercent: -1.9, currency: 'USD', marketState: 'REGULAR' },
+  { symbol: 'XLE', name: 'Energy Select Sector SPDR', price: 89.2, changePercent: 1.05, currency: 'USD', marketState: 'REGULAR' },
 ];
 
 const META = {
@@ -24,7 +39,7 @@ const META = {
 };
 
 describe('buildReport', () => {
-  it('組出摘要與股票兩個 embed，含現價與漲跌幅', () => {
+  it('組出摘要與市場觀察兩個 embed，含領域、原文引用、相關類股行情', () => {
     const embeds = buildReport(ANALYSIS, QUOTES, META);
     expect(embeds).toHaveLength(2);
 
@@ -35,14 +50,22 @@ describe('buildReport', () => {
     const fieldText = JSON.stringify(summary.data.fields);
     expect(fieldText).toContain('1:02:05');
 
-    const stocks = embeds[1];
-    const stockText = JSON.stringify(stocks.data.fields);
-    expect(stockText).toContain('NVDA');
-    expect(stockText).toContain('1250.5');
-    expect(stockText).toContain('-2.34');
-    expect(stockText).toContain('📉');
-    expect(stockText).toContain('📈');
-    expect(stockText).toContain('晶片關稅推高成本');
+    const market = embeds[1];
+    const text = JSON.stringify(market.data.fields);
+    // 領域而非單一個股
+    expect(text).toContain('半導體製造');
+    expect(text).toContain('傳統能源');
+    // 強制引用逐字稿原文
+    expect(text).toContain('twenty five percent tariff');
+    // 方向 emoji
+    expect(text).toContain('📉');
+    expect(text).toContain('📈');
+    // 相關類股/ETF 與行情
+    expect(text).toContain('SOXX');
+    expect(text).toContain('245.5');
+    expect(text).toContain('-2.34');
+    expect(text).toContain('XLE');
+    expect(text).toContain('油氣探勘');
   });
 
   it('免責聲明一定存在', () => {
@@ -51,10 +74,10 @@ describe('buildReport', () => {
     expect(last.data.footer?.text).toBe(DISCLAIMER);
   });
 
-  it('查無行情的 ticker 顯示行情查詢失敗', () => {
-    const embeds = buildReport(ANALYSIS, [QUOTES[0]], META);
-    const stockText = JSON.stringify(embeds[1].data.fields);
-    expect(stockText).toContain('行情查詢失敗');
+  it('查無行情的類股顯示行情查詢失敗', () => {
+    const embeds = buildReport(ANALYSIS, [QUOTES[0]], META); // 只有 SOXX 有行情
+    const text = JSON.stringify(embeds[1].data.fields);
+    expect(text).toContain('行情查詢失敗');
   });
 
   it('轉錄缺漏範圍會列出', () => {
@@ -64,8 +87,8 @@ describe('buildReport', () => {
     expect(text).toContain('40:00');
   });
 
-  it('無股票建議時只有摘要 embed，免責聲明仍在', () => {
-    const embeds = buildReport({ ...ANALYSIS, stockPicks: [] }, [], META);
+  it('無市場影響時只有摘要 embed，免責聲明仍在', () => {
+    const embeds = buildReport({ ...ANALYSIS, marketImpacts: [] }, [], META);
     expect(embeds).toHaveLength(1);
     expect(embeds[0].data.footer?.text).toBe(DISCLAIMER);
   });
@@ -74,10 +97,12 @@ describe('buildReport', () => {
     const longAnalysis: AnalysisResult = {
       summaryZh: '長'.repeat(5000),
       keyPoints: Array.from({ length: 40 }, (_, i) => `重點 ${i} ` + 'x'.repeat(200)),
-      stockPicks: Array.from({ length: 40 }, (_, i) => ({
-        ticker: `TICK${i}`,
+      marketImpacts: Array.from({ length: 40 }, (_, i) => ({
+        theme: `領域 ${i} ` + 'x'.repeat(100),
         direction: 'bullish' as const,
+        quote: 'q'.repeat(300),
         reason: '理由 '.repeat(300),
+        exampleTickers: ['AAA', 'BBB', 'CCC'],
         confidence: 'low' as const,
       })),
     };

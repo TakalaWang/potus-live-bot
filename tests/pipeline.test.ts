@@ -65,7 +65,16 @@ describe('runLiveSession', () => {
     const analysis: AnalysisResult = {
       summaryZh: '測試摘要',
       keyPoints: ['重點'],
-      stockPicks: [{ ticker: 'NVDA', direction: 'bullish', reason: '理由', confidence: 'high' }],
+      marketImpacts: [
+        {
+          theme: '半導體',
+          direction: 'bullish',
+          quote: 'chips',
+          reason: '理由',
+          exampleTickers: ['NVDA'],
+          confidence: 'high',
+        },
+      ],
     };
 
     await runLiveSession(
@@ -144,7 +153,7 @@ describe('runLiveSession', () => {
         },
         analyzer: {
           async analyze() {
-            return { summaryZh: 's', keyPoints: [], stockPicks: [] };
+            return { summaryZh: 's', keyPoints: [], marketImpacts: [] };
           },
         },
         getQuotes: async () => [],
@@ -191,7 +200,7 @@ describe('runLiveSession', () => {
         analyzer: {
           async analyze() {
             analyzerCalled = true;
-            return { summaryZh: '', keyPoints: [], stockPicks: [] };
+            return { summaryZh: '', keyPoints: [], marketImpacts: [] };
           },
         },
         getQuotes: async () => [],
@@ -227,7 +236,7 @@ describe('runLiveSession', () => {
         chunker: new SpeechChunker(CHUNKER_OPTS),
         transcript,
         transcriber: { transcribe: async () => 'after restart' },
-        analyzer: { analyze: async () => ({ summaryZh: 's', keyPoints: [], stockPicks: [] }) },
+        analyzer: { analyze: async () => ({ summaryZh: 's', keyPoints: [], marketImpacts: [] }) },
         getQuotes: async () => [],
         notifier: {
           async sendReport(embeds) {
@@ -269,7 +278,7 @@ describe('runLiveSession', () => {
         analyzer: {
           analyze: async () => {
             analyzerCalled = true;
-            return { summaryZh: 's', keyPoints: [], stockPicks: [] };
+            return { summaryZh: 's', keyPoints: [], marketImpacts: [] };
           },
         },
         getQuotes: async () => [],
