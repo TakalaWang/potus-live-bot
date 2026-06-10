@@ -37,15 +37,17 @@ runs:
         node-version: 22
         cache: pnpm
 
-    - name: Install ffmpeg, yt-dlp, deno
+    # pip install (not the standalone binary) so the PO token plugin loads;
+    # bgutil provider raises the odds against YouTube bot-checks on datacenter IPs
+    - name: Install ffmpeg, yt-dlp + PO token provider, deno
       shell: bash
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq ffmpeg
-        sudo curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp
-        sudo chmod +x /usr/local/bin/yt-dlp
+        python3 -m pip install --quiet -U "yt-dlp[default]" bgutil-ytdlp-pot-provider
         curl -fsSL https://deno.land/install.sh | sh
         echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+        docker run -d --name bgutil-pot -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
 
     - name: Build
       shell: bash
@@ -59,8 +61,10 @@ runs:
       env:
         VIDEO_ID: ${{ inputs.video_id }}
       run: |
-        yt-dlp -f "bestaudio/worst[acodec!=none]" --retries 5 -o audio.m4a \
-          "https://www.youtube.com/watch?v=${VIDEO_ID}"
+        URL="https://www.youtube.com/watch?v=${VIDEO_ID}"
+        yt-dlp -f "bestaudio/worst[acodec!=none]" --retries 5 -o audio.m4a "$URL" ||
+          yt-dlp -f "bestaudio/worst[acodec!=none]" --retries 5 -o audio.m4a \
+            --extractor-args "youtube:player_client=tv,web_safari" "$URL"
 
     - name: Run pipeline and send report
       shell: bash

@@ -82,6 +82,10 @@ jobs:
           VIDEO_ID: ${{ github.event.client_payload.video_id || inputs.video_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL secret not set; skipping failure alert"
+            exit 0
+          fi
           curl -sf -X POST -H 'content-type: application/json' "$WEBHOOK_URL" -d @- <<EOF
           {"content": "⚠️ 報告產生失敗（3 次重試後）：https://www.youtube.com/watch?v=${VIDEO_ID}\n手動重跑：${RUN_URL}"}
           EOF
