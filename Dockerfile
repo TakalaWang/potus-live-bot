@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1
 # Note: onnxruntime-node ships glibc prebuilds only — Alpine (musl) is not supported
 FROM node:22-bookworm-slim AS builder
+RUN corepack enable
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY worker/package.json worker/
+RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
-RUN npx tsc
+RUN pnpm exec tsc
 
 FROM node:22-bookworm-slim
 ARG TARGETARCH
@@ -22,9 +24,11 @@ RUN BIN=yt-dlp_linux; [ "$TARGETARCH" = "arm64" ] && BIN=yt-dlp_linux_aarch64; \
 # deno: required by yt-dlp to solve YouTube JS challenges (extraction degrades or fails without it)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
+RUN corepack enable
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY worker/package.json worker/
+RUN pnpm install --frozen-lockfile --prod && pnpm store prune
 COPY --from=builder /app/dist ./dist
 COPY scripts/download-model.sh scripts/
 RUN bash scripts/download-model.sh

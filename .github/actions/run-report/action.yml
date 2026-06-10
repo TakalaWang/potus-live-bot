@@ -9,7 +9,10 @@ inputs:
     required: true
   discord_bot_token:
     required: true
-  discord_channel_id:
+  worker_url:
+    description: Cloudflare Worker base URL (subscription registry)
+    required: true
+  subscriptions_secret:
     required: true
   gemini_api_key:
     required: true
@@ -27,10 +30,12 @@ runs:
           exit 1
         fi
 
+    - uses: pnpm/action-setup@v4
+
     - uses: actions/setup-node@v4
       with:
         node-version: 22
-        cache: npm
+        cache: pnpm
 
     - name: Install ffmpeg, yt-dlp, deno
       shell: bash
@@ -45,9 +50,9 @@ runs:
     - name: Build
       shell: bash
       run: |
-        npm ci
-        npm run download-model
-        npm run build
+        pnpm install --frozen-lockfile
+        pnpm download-model
+        pnpm build
 
     - name: Download VOD audio
       shell: bash
@@ -61,7 +66,8 @@ runs:
       shell: bash
       env:
         DISCORD_BOT_TOKEN: ${{ inputs.discord_bot_token }}
-        DISCORD_CHANNEL_ID: ${{ inputs.discord_channel_id }}
+        SUBSCRIPTIONS_URL: ${{ inputs.worker_url }}/subscriptions
+        SUBSCRIPTIONS_SECRET: ${{ inputs.subscriptions_secret }}
         GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
         VIDEO_ID: ${{ inputs.video_id }}
         STREAM_TITLE: ${{ inputs.title }}

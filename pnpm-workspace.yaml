@@ -1,0 +1,7 @@
+packages:
+  - worker
+
+onlyBuiltDependencies:
+  - onnxruntime-node
+  - workerd
+  - esbuild

@@ -1,82 +1,66 @@
 # potus-live-bot
 
-A Discord bot that monitors the White House YouTube channel:
+A public Discord bot that monitors the White House YouTube channel. Any server admin can invite it and pick a channel:
 
-1. **Live notification** — pushes a message to a Discord channel the moment a livestream starts
-2. **Background transcription** — pulls the live audio, filters silence with silero-VAD, and transcribes speech segments to an English transcript with Gemini (persisted as it goes; no messages during the stream)
-3. **Post-stream report** — after the stream ends, generates a Traditional Chinese summary, key points, and stock watch suggestions (with live quotes from Yahoo Finance) via Gemini, posted to Discord with the full transcript attached as `.txt`
+1. **Live notification** — pushes a message the moment a livestream starts
+2. **Transcription** — silero-VAD filters silence, Gemini transcribes the speech to an English transcript
+3. **Post-stream report** — a Traditional Chinese summary, key points, and stock watch suggestions (with live quotes from Yahoo Finance), delivered with the full transcript attached as `.txt`
 
 > ⚠️ Stock suggestions are AI-generated, for reference only, and do not constitute investment advice.
 
-## Architecture
+## Using the bot (server admins)
+
+1. Invite the bot to your server (link in the repo description; requires Manage Server).
+2. In the channel that should receive notifications, run **`/subscribe`**.
+3. That's it. `/unsubscribe` stops notifications for the server.
+
+## Architecture (free serverless deployment)
 
 ```
-Watcher (yt-dlp polls /live every 60s)
-  └─ stream detected → Discord live notification
-       └─ AudioIngest (yt-dlp -g → ffmpeg → 16kHz mono PCM; auto-reconnects when the ~6h HLS URL expires)
-            └─ SileroVad (onnxruntime, speech probability per 32ms frame)
-                 └─ SpeechChunker (300ms padding, merges gaps <1s, flushes at 45s of speech or every 3 min)
-                      └─ Gemini ASR (inline WAV) → transcript JSONL (data/)
-stream ends
-  └─ Gemini analysis (structured output: zh-TW summary + stock picks)
-       └─ yahoo-finance2 quotes → Discord embed report + transcript attachment
+┌─ Detection + subscriptions (24/7, free) ────────────────────────┐
+│ Cloudflare Worker                                                │
+│  · 1-min cron polls YouTube Data API (official; no IP bot-check)│
+│  · /interactions — Discord slash commands (/subscribe), Ed25519 │
+│  · subscriptions stored in KV per guild                          │
+│  · live start → REST fan-out notification to subscribed channels│
+│  · stream end (actualEndTime) → GitHub repository_dispatch      │
+└──────────────────────────────────────────────────────────────────┘
+                              ↓ once per stream
+┌─ Report (one-shot job, free on public repos) ────────────────────┐
+│ GitHub Actions: yt-dlp downloads the VOD audio → replay pipeline │
+│ (VAD → Gemini ASR → analysis → quotes) → report fan-out to all   │
+│ subscribed channels. 3 attempts, each on a fresh runner IP.      │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## Requirements
+Setup guide: **[docs/free-deployment.md](docs/free-deployment.md)**.
 
-- Node.js ≥ 20
-- System tools: `yt-dlp`, `ffmpeg` (macOS: `brew install yt-dlp ffmpeg deno`; yt-dlp needs deno to solve YouTube JS challenges)
-- Discord bot token ([Developer Portal](https://discord.com/developers/applications); invite with the `bot` scope, channel permissions View Channel / Send Messages / Embed Links / Attach Files; push-only, no privileged intents needed)
-- Gemini API key ([AI Studio](https://aistudio.google.com))
+There is also a legacy 24/7 single-process mode (live ingestion with real-time transcription) for self-hosting on a machine with a residential IP — see below.
 
-## Run locally
+## Development
+
+Requirements: Node ≥ 20, pnpm, `yt-dlp`, `ffmpeg` (macOS: `brew install yt-dlp ffmpeg deno`).
 
 ```bash
-npm install
-npm run download-model        # silero-vad v6.2 ONNX (2.3MB)
-cp .env.example .env          # fill in token / channel id / API key
-npm run build
-set -a && source .env && set +a
-node dist/index.js
+pnpm install
+pnpm download-model      # silero-vad v6.2 ONNX (2.3MB)
+pnpm build
+pnpm test                # 54 tests
+pnpm typecheck
 ```
 
-## Replay mode (end-to-end verification)
+### Replay mode (end-to-end verification)
 
-Feed a past video or local audio file through the full pipeline as a fake livestream — no need to wait for a real broadcast:
+Feed a past video or local file through the full pipeline as a fake stream:
 
 ```bash
-# Local file, report printed to stdout (no Discord config needed, GEMINI_API_KEY required)
+# report printed to stdout; needs GEMINI_API_KEY only
 node dist/index.js --replay path/to/video.mp4 --no-discord
 
-# Past YouTube video, actually posted to Discord
-node dist/index.js --replay 'https://www.youtube.com/watch?v=XXXX'
-```
-
-## Tests
-
-```bash
-npm test            # vitest (52 tests; VAD tests need download-model first)
-npm run typecheck
-```
-
-## Free serverless deployment (no server needed)
-
-If you don't have an always-on machine, see **[docs/free-deployment.md](docs/free-deployment.md)**: a Cloudflare Worker (free) detects streams via the official YouTube Data API and notifies Discord instantly; when the stream ends it triggers a GitHub Actions job (free on public repos) that downloads the VOD and runs the same pipeline to deliver the report. Zero monthly cost; the report arrives ~10–30 min after the stream instead of ~2 min.
-
-## Docker / k8s deployment
-
-```bash
-docker build -t your-registry/potus-live-bot .
-docker run -e DISCORD_BOT_TOKEN=... -e DISCORD_CHANNEL_ID=... -e GEMINI_API_KEY=... \
-  -v potus-data:/data your-registry/potus-live-bot
-```
-
-k8s (single replica + PVC + Secret):
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-cp k8s/secret.example.yaml k8s/secret.yaml   # fill in real values, never commit
-kubectl apply -f k8s/secret.yaml -f k8s/pvc.yaml -f k8s/deployment.yaml
+# send to all subscribed channels (multi-server mode)
+SUBSCRIPTIONS_URL=https://your-worker.workers.dev/subscriptions \
+SUBSCRIPTIONS_SECRET=... DISCORD_BOT_TOKEN=... \
+node dist/index.js --replay 'https://www.youtube.com/watch?v=XXXX' --title '...' --url '...'
 ```
 
 ## Environment variables
@@ -84,27 +68,32 @@ kubectl apply -f k8s/secret.yaml -f k8s/pvc.yaml -f k8s/deployment.yaml
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DISCORD_BOT_TOKEN` | ✅ | — | Discord bot token |
-| `DISCORD_CHANNEL_ID` | ✅ | — | Target channel ID |
 | `GEMINI_API_KEY` | ✅ | — | Google AI Studio API key |
-| `YOUTUBE_CHANNEL_URL` | | `https://www.youtube.com/@WhiteHouse/live` | Channel /live URL to monitor |
-| `POLL_INTERVAL_SEC` | | `60` | Polling interval (don't go below 30 — YouTube rate-limits) |
-| `DATA_DIR` | | `./data` | Dedup state and transcript directory |
+| `SUBSCRIPTIONS_URL` | multi-server mode | — | Worker `/subscriptions` endpoint |
+| `SUBSCRIPTIONS_SECRET` | with the above | — | shared secret for the endpoint |
+| `DISCORD_CHANNEL_ID` | single-channel mode | — | legacy fixed-channel alternative |
+| `YOUTUBE_CHANNEL_URL` | | `https://www.youtube.com/@WhiteHouse/live` | 24/7 mode polling target |
+| `POLL_INTERVAL_SEC` | | `60` | 24/7 mode poll interval (≥30) |
+| `DATA_DIR` | | `./data` | dedup state and transcripts |
 | `GEMINI_TRANSCRIBE_MODEL` | | `gemini-3.1-flash-lite` | ASR model |
-| `GEMINI_ANALYZE_MODEL` | | `gemini-3.5-flash` | Analysis model |
+| `GEMINI_ANALYZE_MODEL` | | `gemini-3.5-flash` | analysis model |
 | `VAD_MODEL_PATH` | | `models/silero_vad.onnx` | silero VAD model path |
 
-## Behavior details
+## Legacy 24/7 self-host mode
 
-- **Dedup and restarts**: notified video IDs persist in `DATA_DIR/seen.json`; if the process restarts while a stream is still live, it reattaches and continues transcribing (no duplicate notification), with timestamps continuing from the existing transcript. Content during the gap is lost and noted in the report.
-- **Orphan recovery**: if the process crashes between stream end and report delivery, the next startup detects the orphaned transcript and sends the report from disk.
-- **Graceful shutdown**: SIGTERM/SIGINT flushes captured speech and drains the ASR queue before exiting; analysis is skipped (the stream isn't over) and the next run reattaches.
-- **Transcription failures**: a chunk that still fails after SDK retries leaves a `[轉錄失敗 mm:ss–mm:ss]` marker in the transcript and is listed in the report; the pipeline keeps going.
-- **HLS expiry**: the stream URL from yt-dlp expires after ~6 hours; the supervisor loop fetches a fresh URL and resumes automatically. Transient errors (rate limiting, network blips) are retried with backoff — only a definitive "offline" ends the session.
-- **Cost**: Gemini audio is billed at 32 tokens/sec; VAD strips silence before upload. Model IDs are configurable via env vars (the gemini-2.5 family shuts down 2026-10-16).
+Runs detection, live audio capture, and real-time background transcription in one long-running process (report ~2 min after stream end instead of ~10–30 min). Needs an always-on machine — **with a residential IP**: YouTube aggressively bot-checks datacenter IPs for yt-dlp traffic (the serverless mode avoids this by using the official Data API for detection and fresh-runner retries for the one-shot VOD download).
+
+```bash
+set -a && source .env && set +a
+node dist/index.js
+```
+
+Docker / k8s manifests are provided (`Dockerfile`, `k8s/`): single replica + PVC + Secret; see `k8s/secret.example.yaml`. Build with `docker build -t potus-live-bot .`.
+
+Behavior details (both modes): notified video IDs persist for dedup; transcripts append to JSONL as they are produced; failed ASR chunks leave `[轉錄失敗 mm:ss–mm:ss]` markers and are listed in the report; SIGTERM flushes transcripts and reattaches after restart; orphaned transcripts (crash between stream end and report) are recovered at startup.
 
 ## Known limitations
 
-- **Datacenter IPs**: cloud IPs often hit YouTube's "Sign in to confirm you're not a bot". Test `yt-dlp https://www.youtube.com/@WhiteHouse/live --print "%(id)s"` from the deployment network first; you may need cookies or a PO-token plugin.
-- **yt-dlp updates**: YouTube changes break old yt-dlp versions within weeks; run `yt-dlp -U` periodically or rebuild the image.
-- One stream at a time; if the channel runs concurrent streams, only the one `/live` points to is handled.
+- The VOD download on GitHub Actions can hit YouTube's bot check; the workflow retries on fresh runners and alerts on final failure.
+- One stream at a time; if the channel runs concurrent streams, only the first detected one is handled.
 - Report summary and stock suggestions are in Traditional Chinese by design (the transcript stays in the original English).

@@ -8,6 +8,7 @@ import { SileroVad } from './audio/vad.js';
 import { loadConfig, type Config } from './config.js';
 import { ConsoleNotifier } from './discord/console-notifier.js';
 import { Notifier, type NotifierLike } from './discord/notifier.js';
+import { RestNotifier } from './discord/rest-notifier.js';
 import { createGenAI } from './genai.js';
 import {
   runLiveSession,
@@ -30,7 +31,6 @@ async function main(): Promise<void> {
   const env: Record<string, string | undefined> = { ...process.env };
   if (noDiscord) {
     env.DISCORD_BOT_TOKEN ??= '-';
-    env.DISCORD_CHANNEL_ID ??= '-';
   }
   const config = loadConfig(env);
 
@@ -42,9 +42,7 @@ async function main(): Promise<void> {
   const transcriber = new Transcriber(ai, config.transcribeModel);
   const analyzer = new Analyzer(ai, config.analyzeModel);
   const vad = await SileroVad.create(config.vadModelPath);
-  const notifier: NotifierLike = noDiscord
-    ? new ConsoleNotifier()
-    : new Notifier(config.discordBotToken, config.discordChannelId);
+  const notifier = await buildNotifier(config, noDiscord);
   await notifier.start();
 
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
@@ -185,6 +183,28 @@ async function recoverOrphans(config: Config, seen: SeenStore, postDeps: PostAna
 function argValue(argv: string[], flag: string): string | undefined {
   const idx = argv.indexOf(flag);
   return idx !== -1 ? argv[idx + 1] : undefined;
+}
+
+async function buildNotifier(config: Config, noDiscord: boolean): Promise<NotifierLike> {
+  if (noDiscord) return new ConsoleNotifier();
+  if (config.subscriptionsUrl) {
+    const channels = await fetchSubscribedChannels(config.subscriptionsUrl, config.subscriptionsSecret!);
+    console.log(`[main] 多群組模式：${channels.length} 個訂閱頻道`);
+    return new RestNotifier(config.discordBotToken, channels);
+  }
+  if (config.discordChannelId) {
+    return new Notifier(config.discordBotToken, config.discordChannelId);
+  }
+  throw new Error(
+    '需要 SUBSCRIPTIONS_URL + SUBSCRIPTIONS_SECRET（多群組模式）或 DISCORD_CHANNEL_ID（單頻道模式），或加 --no-discord',
+  );
+}
+
+async function fetchSubscribedChannels(url: string, secret: string): Promise<string[]> {
+  const res = await fetch(url, { headers: { authorization: `Bearer ${secret}` } });
+  if (!res.ok) throw new Error(`訂閱清單取得失敗：${res.status} ${await res.text()}`);
+  const subs = (await res.json()) as { channelId: string }[];
+  return [...new Set(subs.map((s) => s.channelId))];
 }
 
 async function runReplay(

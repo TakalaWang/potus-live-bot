@@ -3,13 +3,12 @@ import { loadConfig } from '../src/config.js';
 
 const REQUIRED = {
   DISCORD_BOT_TOKEN: 'token',
-  DISCORD_CHANNEL_ID: '123456789',
   GEMINI_API_KEY: 'key',
 };
 
 describe('loadConfig', () => {
   it('缺必填變數時丟錯並列出缺哪些', () => {
-    expect(() => loadConfig({})).toThrow(/DISCORD_BOT_TOKEN.*DISCORD_CHANNEL_ID.*GEMINI_API_KEY/s);
+    expect(() => loadConfig({})).toThrow(/DISCORD_BOT_TOKEN.*GEMINI_API_KEY/s);
   });
 
   it('只缺一個時只列那一個', () => {
@@ -17,6 +16,25 @@ describe('loadConfig', () => {
     delete env.GEMINI_API_KEY;
     expect(() => loadConfig(env)).toThrow(/GEMINI_API_KEY/);
     expect(() => loadConfig(env)).not.toThrow(/DISCORD_BOT_TOKEN/);
+  });
+
+  it('DISCORD_CHANNEL_ID 為選填', () => {
+    const cfg = loadConfig({ ...REQUIRED });
+    expect(cfg.discordChannelId).toBeUndefined();
+    expect(loadConfig({ ...REQUIRED, DISCORD_CHANNEL_ID: '123' }).discordChannelId).toBe('123');
+  });
+
+  it('SUBSCRIPTIONS_URL 需搭配 SUBSCRIPTIONS_SECRET', () => {
+    expect(() => loadConfig({ ...REQUIRED, SUBSCRIPTIONS_URL: 'https://w.example/subscriptions' })).toThrow(
+      /SUBSCRIPTIONS_SECRET/,
+    );
+    const cfg = loadConfig({
+      ...REQUIRED,
+      SUBSCRIPTIONS_URL: 'https://w.example/subscriptions',
+      SUBSCRIPTIONS_SECRET: 's3cret',
+    });
+    expect(cfg.subscriptionsUrl).toBe('https://w.example/subscriptions');
+    expect(cfg.subscriptionsSecret).toBe('s3cret');
   });
 
   it('套用預設值', () => {

@@ -1,7 +1,9 @@
 export interface Env {
   STATE: KVNamespace;
   YOUTUBE_API_KEY: string;
-  DISCORD_WEBHOOK_URL: string;
+  DISCORD_BOT_TOKEN: string;
+  DISCORD_PUBLIC_KEY: string;
+  SUBSCRIPTIONS_SECRET: string;
   GITHUB_TOKEN: string;
   GITHUB_REPO: string;
   CHANNEL_ID: string;
@@ -12,8 +14,23 @@ interface LiveVideo {
   title: string;
 }
 
+interface Subscription {
+  guildId: string;
+  channelId: string;
+}
+
 export default {
-  async fetch(): Promise<Response> {
+  async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url);
+    if (req.method === 'POST' && url.pathname === '/interactions') {
+      return handleInteraction(req, env);
+    }
+    if (req.method === 'GET' && url.pathname === '/subscriptions') {
+      if (req.headers.get('authorization') !== `Bearer ${env.SUBSCRIPTIONS_SECRET}`) {
+        return new Response('unauthorized', { status: 401 });
+      }
+      return Response.json(await listSubscriptions(env));
+    }
     return new Response('potus-live-bot worker', { status: 200 });
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -39,6 +56,131 @@ async function tick(env: Env): Promise<void> {
   await env.STATE.put(`seen:${live.videoId}`, '1', { expirationTtl: 30 * 86400 });
   await env.STATE.put('active', JSON.stringify(live));
   await notifyLiveStart(env, live);
+}
+
+async function handleInteraction(req: Request, env: Env): Promise<Response> {
+  const signature = req.headers.get('x-signature-ed25519');
+  const timestamp = req.headers.get('x-signature-timestamp');
+  const body = await req.text();
+  if (!signature || !timestamp || !(await verifySignature(env, signature, timestamp, body))) {
+    return new Response('invalid signature', { status: 401 });
+  }
+
+  const interaction = JSON.parse(body) as {
+    type: number;
+    guild_id?: string;
+    channel_id?: string;
+    data?: { name?: string };
+  };
+
+  if (interaction.type === 1) {
+    return Response.json({ type: 1 });
+  }
+
+  if (interaction.type === 2) {
+    const name = interaction.data?.name;
+    const guildId = interaction.guild_id;
+    const channelId = interaction.channel_id;
+    if (!guildId || !channelId) {
+      return ephemeral('這個指令只能在伺服器頻道中使用。');
+    }
+    if (name === 'subscribe') {
+      await env.STATE.put(`sub:${guildId}`, JSON.stringify({ channelId }));
+      return ephemeral(`✅ 已訂閱！白宮開直播時會在 <#${channelId}> 通知，直播結束後送出分析報告。\n用 /unsubscribe 可取消。`);
+    }
+    if (name === 'unsubscribe') {
+      await env.STATE.delete(`sub:${guildId}`);
+      return ephemeral('已取消訂閱，本伺服器不會再收到通知。');
+    }
+  }
+
+  return new Response('unhandled interaction', { status: 400 });
+}
+
+function ephemeral(content: string): Response {
+  return Response.json({ type: 4, data: { content, flags: 64 } });
+}
+
+async function verifySignature(env: Env, signature: string, timestamp: string, body: string): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      hexToBytes(env.DISCORD_PUBLIC_KEY),
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+    return await crypto.subtle.verify(
+      'Ed25519',
+      key,
+      hexToBytes(signature),
+      new TextEncoder().encode(timestamp + body),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(new ArrayBuffer(hex.length / 2));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+async function listSubscriptions(env: Env): Promise<Subscription[]> {
+  const subs: Subscription[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.STATE.list({ prefix: 'sub:', cursor });
+    for (const key of page.keys) {
+      const raw = await env.STATE.get(key.name);
+      if (!raw) continue;
+      const { channelId } = JSON.parse(raw) as { channelId: string };
+      subs.push({ guildId: key.name.slice(4), channelId });
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return subs;
+}
+
+async function notifyLiveStart(env: Env, live: LiveVideo): Promise<void> {
+  const url = `https://www.youtube.com/watch?v=${live.videoId}`;
+  const payload = {
+    embeds: [
+      {
+        color: 0xed4245,
+        title: `🔴 直播開始：${live.title}`.slice(0, 256),
+        url,
+        description: `白宮頻道正在直播，結束後將自動送出分析報告。\n${url}`,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+  for (const sub of await listSubscriptions(env)) {
+    await sendToChannel(env, sub, payload);
+  }
+}
+
+async function sendToChannel(env: Env, sub: Subscription, payload: unknown): Promise<void> {
+  const res = await fetch(`https://discord.com/api/v10/channels/${sub.channelId}/messages`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 403 || res.status === 404) {
+    await env.STATE.delete(`sub:${sub.guildId}`);
+    return;
+  }
+  if (res.status === 429) {
+    const retryAfter = Number((await res.json<{ retry_after?: number }>()).retry_after ?? 1);
+    await new Promise((r) => setTimeout(r, retryAfter * 1000 + 100));
+    await sendToChannel(env, sub, payload);
+  }
 }
 
 interface PlaylistItemsResponse {
@@ -103,26 +245,6 @@ async function hasEnded(env: Env, videoId: string): Promise<boolean> {
   const video = data.items?.[0];
   if (!video) return true;
   return Boolean(video.liveStreamingDetails?.actualEndTime);
-}
-
-async function notifyLiveStart(env: Env, live: LiveVideo): Promise<void> {
-  const url = `https://www.youtube.com/watch?v=${live.videoId}`;
-  const res = await fetch(env.DISCORD_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      embeds: [
-        {
-          color: 0xed4245,
-          title: `🔴 直播開始：${live.title}`.slice(0, 256),
-          url,
-          description: `白宮頻道正在直播，結束後將自動產生分析報告。\n${url}`,
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`Discord webhook ${res.status}: ${await res.text()}`);
 }
 
 async function dispatchReport(env: Env, live: LiveVideo): Promise<void> {

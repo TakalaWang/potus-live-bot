@@ -12,7 +12,8 @@
     "replay": "node dist/index.js --replay",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "download-model": "bash scripts/download-model.sh"
+    "download-model": "bash scripts/download-model.sh",
+    "register-commands": "node scripts/register-commands.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.8.0",
@@ -24,5 +25,6 @@
     "@types/node": "^25.9.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
-  }
+  },
+  "packageManager": "pnpm@10.28.0"
 }

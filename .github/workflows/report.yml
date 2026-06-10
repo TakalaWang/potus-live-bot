@@ -32,7 +32,8 @@ jobs:
           video_id: ${{ env.VIDEO_ID }}
           title: ${{ env.STREAM_TITLE }}
           discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
-          discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
+          worker_url: ${{ secrets.WORKER_URL }}
+          subscriptions_secret: ${{ secrets.SUBSCRIPTIONS_SECRET }}
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
 
   # each retry runs on a fresh runner, i.e. a different IP (YouTube bot-check lottery);
@@ -50,7 +51,8 @@ jobs:
           video_id: ${{ env.VIDEO_ID }}
           title: ${{ env.STREAM_TITLE }}
           discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
-          discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
+          worker_url: ${{ secrets.WORKER_URL }}
+          subscriptions_secret: ${{ secrets.SUBSCRIPTIONS_SECRET }}
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
 
   attempt-3:
@@ -65,7 +67,8 @@ jobs:
           video_id: ${{ env.VIDEO_ID }}
           title: ${{ env.STREAM_TITLE }}
           discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
-          discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
+          worker_url: ${{ secrets.WORKER_URL }}
+          subscriptions_secret: ${{ secrets.SUBSCRIPTIONS_SECRET }}
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
 
   notify-failure:
