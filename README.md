@@ -17,26 +17,46 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.com/oauth2/authorize?client_id=1514254280637284423&scope=bot+applications.commands&permissions=52224&integration_type=0"><b>➕ Invite the bot to your server</b></a>
+  <a href="https://discord.com/oauth2/authorize?client_id=1514254280637284423&scope=bot+applications.commands&permissions=52224&integration_type=0"><b>Invite the bot to your server</b></a>
 </p>
 
 ---
 
 ## Features
 
-- 🔴 **Live notifications** — a message lands in your channel the moment the White House goes live
-- 🎙️ **AI transcription** — silero-VAD strips silence, Gemini transcribes the speech verbatim
-- 📊 **Post-stream report** — Traditional Chinese summary, key points, and stock watch suggestions with live Yahoo Finance quotes, plus the full transcript as a `.txt` attachment
-- 🌐 **Multi-server** — any admin invites the bot and picks a channel with `/subscribe`; no per-server setup on the operator side
-- 💸 **100% serverless and free** — Cloudflare Workers + GitHub Actions + free-tier APIs; no always-on machine anywhere
+- **Live notifications** — a message lands in your channel the moment the White House goes live
+- **AI transcription** — silero-VAD strips silence, Gemini transcribes the speech verbatim
+- **Post-stream report** — summary, key points, and stock watch suggestions with live Yahoo Finance quotes, plus the full transcript as a `.txt` attachment
+- **Multi-server** — any admin invites the bot and picks a channel with `/subscribe`; no per-server setup on the operator side
+- **Serverless and free** — Cloudflare Workers + GitHub Actions + free-tier APIs; no always-on machine anywhere
 
-> ⚠️ Stock suggestions are AI-generated, for reference only, and do not constitute investment advice.
+> Stock suggestions are AI-generated, for reference only, and do not constitute investment advice.
 
 ## Usage
 
 1. [Invite the bot](https://discord.com/oauth2/authorize?client_id=1514254280637284423&scope=bot+applications.commands&permissions=52224&integration_type=0) (requires Manage Server).
 2. Run `/subscribe channel:#your-channel` anywhere in the server.
 3. Done — `/unsubscribe` stops notifications.
+
+## Example output
+
+When a stream starts, the subscribed channel gets a notification:
+
+> **LIVE: President Trump Signs the Secure America Act**
+> The White House is streaming. An analysis report will follow automatically when it ends.
+
+About 10–30 minutes after the stream ends, the report follows. Reports are delivered in Traditional Chinese; the example below is translated to English for illustration (the transcript attachment stays in the original English):
+
+> **Stream report: President Trump Signs the Secure America Act**
+> President Trump announced a 25% tariff on all imported semiconductors, aiming to bring chip manufacturing back to the US. He also pledged to approve new drilling permits immediately...
+>
+> **Duration** 1:42:08 — **Key points** announced a 25% semiconductor import tariff; pledged immediate approval of new drilling permits; ...
+>
+> **Stock watch**
+> Bearish | TSM (confidence: high) — Taiwan Semiconductor: 427.92 USD (+0.26%) — the tariff directly raises costs on TSMC's US-bound chips...
+> Bullish | INTC (confidence: high) — Intel: 107.92 USD (−2.13%) — flagship domestic fab operator positioned to benefit...
+>
+> `transcript.txt` attached — *AI-generated, not investment advice*
 
 ## How it works
 
@@ -56,22 +76,40 @@ GitHub Actions: yt-dlp downloads the VOD audio → silero-VAD → Gemini ASR
 
 Detection runs every minute on a Cloudflare Worker. The heavy lifting (audio download, VAD, transcription, analysis) happens in a one-shot GitHub Actions job after the stream ends, so nothing needs to stay running — and nothing costs money.
 
-There is also a legacy 24/7 single-process mode (`node dist/index.js`) with real-time transcription for self-hosting on a residential-IP machine; YouTube aggressively bot-checks datacenter IPs, which is exactly what the serverless architecture avoids.
+(A legacy 24/7 single-process mode with real-time transcription also exists for self-hosting — see [Configuration](#configuration).)
 
 ## Deploy your own
 
-Everything fits in free tiers: a Discord application, a YouTube Data API key (Google Cloud), a Cloudflare account, a Gemini API key (AI Studio), and a public GitHub repo.
+You need five free accounts/keys: a [Discord application](https://discord.com/developers/applications), a YouTube Data API key ([Google Cloud](https://console.cloud.google.com), enable *YouTube Data API v3*), a [Cloudflare](https://dash.cloudflare.com) account, a Gemini API key ([AI Studio](https://aistudio.google.com)), and a public GitHub fork of this repo.
 
-1. **Discord app** — create at the [Developer Portal](https://discord.com/developers/applications): grab the bot token, application id, and public key. Register the commands:
-   ```bash
-   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... pnpm register-commands
-   ```
-2. **Worker** — in `worker/`: `pnpm exec wrangler login`, create the KV namespace (`pnpm exec wrangler kv namespace create STATE`, paste the id into `wrangler.toml`), set the five secrets listed at the top of `wrangler.toml`, then `pnpm exec wrangler deploy`.
-3. **Connect Discord** — set the Interactions Endpoint URL to `https://<your-worker>.workers.dev/interactions`.
-4. **GitHub Actions secrets** — `DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL`, `SUBSCRIPTIONS_SECRET` (same value as the Worker secret), and optionally `DISCORD_WEBHOOK_URL` for failure alerts.
-5. **Test** — Actions → `stream-report` → Run workflow with any past stream's `video_id`.
+**1. Discord app** — from the Developer Portal grab the **bot token**, **application id**, and **public key**, then register the slash commands:
 
-Monitoring a different channel? Change `CHANNEL_ID` in `worker/wrangler.toml`.
+```bash
+DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... pnpm register-commands
+```
+
+**2. Deploy the Worker** — also create a [fine-grained PAT](https://github.com/settings/personal-access-tokens) (this repo only, *Contents: read & write*) so the Worker can trigger the report workflow:
+
+```bash
+cd worker
+pnpm install
+pnpm exec wrangler login
+pnpm exec wrangler kv namespace create STATE    # paste the printed id into wrangler.toml
+pnpm exec wrangler secret put YOUTUBE_API_KEY
+pnpm exec wrangler secret put DISCORD_BOT_TOKEN
+pnpm exec wrangler secret put DISCORD_PUBLIC_KEY
+pnpm exec wrangler secret put SUBSCRIPTIONS_SECRET   # any long random string
+pnpm exec wrangler secret put GITHUB_TOKEN           # the fine-grained PAT
+pnpm exec wrangler deploy                            # prints your workers.dev URL
+```
+
+Also set `GITHUB_REPO` (your fork) and, for a different channel, `CHANNEL_ID` in `wrangler.toml`.
+
+**3. Connect Discord** — Developer Portal → General Information → **Interactions Endpoint URL** → `https://<your-worker>.workers.dev/interactions`.
+
+**4. GitHub Actions secrets** — in your fork's Settings → Secrets → Actions, add `DISCORD_BOT_TOKEN`, `GEMINI_API_KEY`, `WORKER_URL` (the workers.dev URL), `SUBSCRIPTIONS_SECRET` (same value as the Worker secret), and optionally `DISCORD_WEBHOOK_URL` for failure alerts.
+
+**5. Test** — Actions → `stream-report` → *Run workflow* with any past stream's `video_id`; the report should reach your subscribed channel in ~10–30 minutes.
 
 ## Development
 
@@ -95,8 +133,8 @@ node dist/index.js --replay path/to/video.mp4 --no-discord
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DISCORD_BOT_TOKEN` | ✅ | — | Discord bot token |
-| `GEMINI_API_KEY` | ✅ | — | Google AI Studio API key |
+| `DISCORD_BOT_TOKEN` | yes | — | Discord bot token |
+| `GEMINI_API_KEY` | yes | — | Google AI Studio API key |
 | `SUBSCRIPTIONS_URL` | multi-server mode | — | Worker `/subscriptions` endpoint |
 | `SUBSCRIPTIONS_SECRET` | with the above | — | shared secret for the endpoint |
 | `DISCORD_CHANNEL_ID` | single-channel mode | — | legacy fixed-channel alternative |
@@ -106,6 +144,13 @@ node dist/index.js --replay path/to/video.mp4 --no-discord
 | `GEMINI_TRANSCRIBE_MODEL` | | `gemini-3.1-flash-lite` | ASR model |
 | `GEMINI_ANALYZE_MODEL` | | `gemini-3.5-flash` | analysis model |
 | `VAD_MODEL_PATH` | | `models/silero_vad.onnx` | silero VAD model path |
+
+## Limitations
+
+- The VOD download on GitHub Actions can hit YouTube's bot check; the workflow retries on fresh runner IPs (3 attempts) and posts a failure alert with a one-click re-run link.
+- One stream at a time — if the channel runs concurrent streams, only the first detected one is handled.
+- Streams with archiving disabled (rare) have no VOD to transcribe.
+- Report summary and stock picks are in Traditional Chinese by design; the transcript stays in the original English.
 
 ## Contributing
 
