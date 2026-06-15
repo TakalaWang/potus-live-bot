@@ -10,6 +10,13 @@ export interface ReportMeta {
   failedRanges: string[];
 }
 
+export interface SocialReportMeta {
+  username: string;
+  postUrl: string;
+  text: string;
+  createdAt: string;
+}
+
 const FIELD_VALUE_LIMIT = 1024;
 const FIELD_NAME_LIMIT = 256;
 const TITLE_LIMIT = 256;
@@ -48,22 +55,58 @@ export function buildReport(
   summary.addFields(summaryFields.slice(0, MAX_FIELDS));
 
   const embeds = [summary];
-  if (analysis.marketImpacts.length > 0) {
-    const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
-    const market = new EmbedBuilder()
-      .setColor(0xfee75c)
-      .setTitle('💹 市場觀察｜受影響領域與方向（非個股推薦）');
-    market.addFields(
-      analysis.marketImpacts.slice(0, MAX_FIELDS).map((impact) => ({
-        name: truncate(impactTitle(impact), FIELD_NAME_LIMIT),
-        value: truncate(impactValue(impact, quoteMap), FIELD_VALUE_LIMIT),
-        inline: false,
-      })),
-    );
-    embeds.push(market);
-  }
-  embeds[embeds.length - 1].setFooter({ text: DISCLAIMER });
+  addMarketEmbed(embeds, analysis.marketImpacts, quotes, '💹 市場觀察｜受影響領域與方向（非個股推薦）');
+  return finalizeEmbeds(embeds);
+}
 
+export function buildSocialReport(
+  analysis: AnalysisResult,
+  quotes: StockQuote[],
+  meta: SocialReportMeta,
+): EmbedBuilder[] {
+  const summary = new EmbedBuilder()
+    .setColor(0x1d9bf0)
+    .setTitle(truncate(`📣 X 發文分析：@${meta.username}`, TITLE_LIMIT))
+    .setDescription(truncate(analysis.summaryZh || '（無摘要）', DESC_LIMIT))
+    .setTimestamp(new Date(meta.createdAt));
+
+  if (/^https?:\/\//.test(meta.postUrl)) summary.setURL(meta.postUrl);
+
+  const summaryFields = [
+    { name: '🕒 發文時間', value: meta.createdAt, inline: true },
+    { name: '🧾 原文', value: truncate(meta.text, FIELD_VALUE_LIMIT), inline: false },
+  ];
+  for (const chunk of chunkLines(analysis.keyPoints.map((p) => `• ${p}`))) {
+    summaryFields.push({ name: '🔑 重點', value: chunk, inline: false });
+  }
+  summary.addFields(summaryFields.slice(0, MAX_FIELDS));
+
+  const embeds = [summary];
+  addMarketEmbed(embeds, analysis.marketImpacts, quotes, '💹 市場觀察｜投資留意方向（非買賣建議）');
+  return finalizeEmbeds(embeds);
+}
+
+function addMarketEmbed(
+  embeds: EmbedBuilder[],
+  impacts: MarketImpact[],
+  quotes: StockQuote[],
+  title: string,
+): void {
+  if (impacts.length === 0) return;
+  const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
+  const market = new EmbedBuilder().setColor(0xfee75c).setTitle(title);
+  market.addFields(
+    impacts.slice(0, MAX_FIELDS).map((impact) => ({
+      name: truncate(impactTitle(impact), FIELD_NAME_LIMIT),
+      value: truncate(impactValue(impact, quoteMap), FIELD_VALUE_LIMIT),
+      inline: false,
+    })),
+  );
+  embeds.push(market);
+}
+
+function finalizeEmbeds(embeds: EmbedBuilder[]): EmbedBuilder[] {
+  embeds.at(-1)!.setFooter({ text: DISCLAIMER });
   while (embeds.reduce((sum, e) => sum + e.length, 0) > TOTAL_LIMIT) {
     const target = [...embeds].reverse().find((e) => (e.data.fields?.length ?? 0) > 0);
     if (!target) break;
@@ -83,9 +126,9 @@ function impactValue(impact: MarketImpact, quoteMap: Map<string, StockQuote>): s
   if (impact.exampleTickers.length > 0) {
     const tickers = impact.exampleTickers.map((t) => {
       const q = quoteMap.get(t.trim().toUpperCase());
-      return q
-        ? `${t}（${q.price} ${q.currency}，${q.changePercent >= 0 ? '+' : ''}${q.changePercent.toFixed(2)}%）`
-        : `${t}（行情查詢失敗）`;
+      if (!q) return `${t}（行情查詢失敗）`;
+      const changeSign = q.changePercent >= 0 ? '+' : '';
+      return `${t}（${q.price} ${q.currency}，${changeSign}${q.changePercent.toFixed(2)}%）`;
     });
     lines.push(`相關類股／ETF：${tickers.join('、')}`);
   }

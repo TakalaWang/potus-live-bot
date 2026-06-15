@@ -36,5 +36,9 @@ const res = await fetch(`https://discord.com/api/v10/applications/${appId}/comma
   headers: { authorization: `Bot ${token}`, 'content-type': 'application/json' },
   body: JSON.stringify(commands),
 });
-console.log(res.status, res.ok ? 'commands registered' : await res.text());
+if (res.ok) {
+  console.log(res.status, 'commands registered');
+} else {
+  console.error(res.status, 'command registration failed');
+}
 process.exit(res.ok ? 0 : 1);

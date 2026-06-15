@@ -3,16 +3,16 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.potus-agent</string>
+  <string>com.president-signal-agent</string>
 
   <!-- absolute path to scripts/run-agent.sh in your checkout -->
   <key>ProgramArguments</key>
   <array>
-    <string>/PATH/TO/potus-live-bot/scripts/run-agent.sh</string>
+    <string>/PATH/TO/president-signal-bot/scripts/run-agent.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/PATH/TO/potus-live-bot</string>
+  <string>/PATH/TO/president-signal-bot</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -24,8 +24,8 @@
   <integer>30</integer>
 
   <key>StandardOutPath</key>
-  <string>/PATH/TO/potus-live-bot/data/agent.log</string>
+  <string>/PATH/TO/president-signal-bot/data/agent.log</string>
   <key>StandardErrorPath</key>
-  <string>/PATH/TO/potus-live-bot/data/agent.log</string>
+  <string>/PATH/TO/president-signal-bot/data/agent.log</string>
 </dict>
 </plist>

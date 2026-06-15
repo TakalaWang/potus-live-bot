@@ -16,15 +16,15 @@ curl -fsSL https://deno.land/install.sh | sudo DENO_INSTALL=/usr/local sh   # yt
 # Node 20+: use nodesource or nvm if your distro ships an older version
 
 # 2. Code
-sudo git clone https://github.com/TakalaWang/potus-live-bot /opt/potus-live-bot
-cd /opt/potus-live-bot
+sudo git clone https://github.com/TakalaWang/president-signal-bot /opt/president-signal-bot
+cd /opt/president-signal-bot
 sudo corepack enable
 sudo pnpm install --frozen-lockfile
 sudo pnpm download-model
 sudo pnpm build
 
-# 3. Config — create /opt/potus-live-bot/.env
-sudo tee /opt/potus-live-bot/.env > /dev/null <<'EOF'
+# 3. Config — create /opt/president-signal-bot/.env
+sudo tee /opt/president-signal-bot/.env > /dev/null <<'EOF'
 DISCORD_BOT_TOKEN=your-bot-token
 GEMINI_API_KEY=your-gemini-key
 SUBSCRIPTIONS_URL=https://your-worker.workers.dev/subscriptions
@@ -32,10 +32,10 @@ SUBSCRIPTIONS_SECRET=same-secret-as-the-worker
 EOF
 
 # 4. Service
-sudo cp deploy/potus-agent.service /etc/systemd/system/
+sudo cp deploy/president-signal-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now potus-agent
-sudo journalctl -u potus-agent -f      # watch it work
+sudo systemctl enable --now president-signal-agent
+sudo journalctl -u president-signal-agent -f      # watch it work
 ```
 
 `SUBSCRIPTIONS_URL` is the same Worker endpoint the report job used; the agent derives `/pending` and `/pending/done` from it. `DATA_DIR` defaults to `./data` (dedup state + transcripts) — set it to a writable absolute path if you prefer.
@@ -54,15 +54,15 @@ SUBSCRIPTIONS_SECRET=same-secret-as-the-worker
 EOF
 
 # 2. install the launchd agent (edit the /PATH/TO/ placeholders first)
-cp deploy/com.potus-agent.plist.example ~/Library/LaunchAgents/com.potus-agent.plist
-# replace /PATH/TO/potus-live-bot with your actual checkout path in the plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.potus-agent.plist
+cp deploy/com.president-signal-agent.plist.example ~/Library/LaunchAgents/com.president-signal-agent.plist
+# replace /PATH/TO/president-signal-bot with your actual checkout path in the plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.president-signal-agent.plist
 
 # 3. watch it
 tail -f data/agent.log
 ```
 
-Manage it: `launchctl bootout gui/$(id -u)/com.potus-agent` to stop, `launchctl kickstart -k gui/$(id -u)/com.potus-agent` to restart after a rebuild.
+Manage it: `launchctl bootout gui/$(id -u)/com.president-signal-agent` to stop, `launchctl kickstart -k gui/$(id -u)/com.president-signal-agent` to restart after a rebuild.
 
 A launchd *agent* runs only while you're logged in and pauses while the Mac sleeps — fine for a trial run, but a Raspberry Pi (above) is better for unattended 24/7 use.
 

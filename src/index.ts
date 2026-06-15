@@ -1,7 +1,9 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { runAgentPass, WorkerAgentClient } from './agent.js';
 import { Analyzer } from './analysis/analyzer.js';
 import { getQuotes } from './analysis/quotes.js';
+import { SocialAnalyzer } from './analysis/social-analyzer.js';
 import { Transcriber } from './asr/gemini.js';
 import { SpeechChunker } from './audio/chunker.js';
 import { captureFile, captureLive, resolveReplaySource, type CaptureHandle } from './audio/ingest.js';
@@ -14,15 +16,22 @@ import { createGenAI } from './genai.js';
 import {
   runLiveSession,
   runPostAnalysis,
+  runSocialPostReport,
   type PipelineDeps,
   type PostAnalysisDeps,
   type SessionMeta,
+  type SocialAnalysisDeps,
 } from './pipeline.js';
 import { SeenStore, TranscriptStore } from './state.js';
+import type { PendingItem, PendingVideo } from './types.js';
 import { checkLive } from './watcher.js';
+import { workerRouteUrl } from './worker-url.js';
 
 let shuttingDown = false;
 let activeCapture: CaptureHandle | null = null;
+const RECENT_CONTEXT_FILES = 5;
+const RECENT_CONTEXT_LIMIT = 8_000;
+const NO_RECENT_CONTEXT = '（沒有可用的近期直播逐字稿）';
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -43,6 +52,7 @@ async function main(): Promise<void> {
   const ai = createGenAI(config.geminiApiKey);
   const transcriber = new Transcriber(ai, config.transcribeModel);
   const analyzer = new Analyzer(ai, config.analyzeModel);
+  const socialAnalyzer = new SocialAnalyzer(ai, config.analyzeModel);
   const vad = await SileroVad.create(config.vadModelPath);
   const notifier = await buildNotifier(config, noDiscord);
   await notifier.start();
@@ -74,6 +84,7 @@ async function main(): Promise<void> {
     },
   });
   const postDeps: PostAnalysisDeps = { analyzer, getQuotes, notifier };
+  const socialDeps: SocialAnalysisDeps = { analyzer: socialAnalyzer, getQuotes, notifier };
 
   if (replayIdx !== -1) {
     const source = argv[replayIdx + 1];
@@ -88,7 +99,7 @@ async function main(): Promise<void> {
   }
 
   if (agentMode) {
-    await runAgent(config, sessionDeps);
+    await runAgent(config, sessionDeps, socialDeps);
     await notifier.stop();
     return;
   }
@@ -125,12 +136,12 @@ async function pollOnce(
 
   const { videoId, title } = status;
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  if (!seen.isSeen(videoId)) {
+  if (seen.isSeen(videoId)) {
+    console.log(`[main] 重新接上進行中的直播：${videoId}`);
+  } else {
     seen.markSeen(videoId);
     await notifier.notifyLiveStart(title, videoUrl);
     console.log(`[main] 直播開始：${title}（${videoId}）`);
-  } else {
-    console.log(`[main] 重新接上進行中的直播：${videoId}`);
   }
 
   vad.reset();
@@ -196,7 +207,7 @@ function argValue(argv: string[], flag: string): string | undefined {
 async function buildNotifier(config: Config, noDiscord: boolean): Promise<NotifierLike> {
   if (noDiscord) return new ConsoleNotifier();
   if (config.subscriptionsUrl) {
-    const channels = await fetchSubscribedChannels(config.subscriptionsUrl, config.subscriptionsSecret!);
+    const channels = await fetchSubscribedChannels(workerRouteUrl(config.subscriptionsUrl, '/subscriptions'), config.subscriptionsSecret!);
     console.log(`[main] 多群組模式：${channels.length} 個訂閱頻道`);
     return new RestNotifier(config.discordBotToken, channels);
   }
@@ -232,21 +243,37 @@ async function runReplay(
 async function runAgent(
   config: Config,
   sessionDeps: (videoId: string, startCapture: PipelineDeps['startCapture']) => PipelineDeps,
+  socialDeps: SocialAnalysisDeps,
 ): Promise<void> {
   if (!config.subscriptionsUrl || !config.subscriptionsSecret) {
     throw new Error('--agent 需要 SUBSCRIPTIONS_URL + SUBSCRIPTIONS_SECRET');
   }
   const client = new WorkerAgentClient(config.subscriptionsUrl, config.subscriptionsSecret);
   const seen = new SeenStore(config.dataDir);
-  console.log(`[agent] 啟動：每 ${config.pollIntervalSec}s 向 Worker 領取待辦場次`);
+  console.log(`[agent] 啟動：每 ${config.pollIntervalSec}s 向 Worker 領取待辦項目`);
 
-  const processStream = async (meta: SessionMeta): Promise<void> => {
-    const input = await resolveReplaySource(meta.videoUrl);
+  const processVideo = async (item: PendingVideo): Promise<void> => {
+    const input = await resolveReplaySource(item.videoUrl);
+    const meta: SessionMeta = { videoId: item.videoId, title: item.title, videoUrl: item.videoUrl };
     const result = await runLiveSession(
       meta,
       sessionDeps(meta.videoId, (onPcm) => captureFile(input, onPcm)),
-    );
+    ).finally(() => {
+      activeCapture = null;
+    });
     if (result !== 'completed') throw new Error('session aborted');
+  };
+
+  const processPending = async (item: PendingItem): Promise<void> => {
+    if (item.kind === 'video') {
+      await processVideo(item);
+      return;
+    }
+    if (item.kind === 'x-post') {
+      await runSocialPostReport(item, socialDeps, loadRecentTranscriptContext(config.dataDir));
+      return;
+    }
+    assertNever(item);
   };
 
   while (!shuttingDown) {
@@ -254,7 +281,7 @@ async function runAgent(
       await runAgentPass({
         client,
         isDone: (id) => seen.isSeen(`done:${id}`),
-        process: processStream,
+        process: processPending,
         markDone: (id) => seen.markSeen(`done:${id}`),
       });
     } catch (err) {
@@ -265,9 +292,53 @@ async function runAgent(
   }
 }
 
+function loadRecentTranscriptContext(dataDir: string): string {
+  let filenames: string[];
+  try {
+    filenames = readdirSync(dataDir);
+  } catch {
+    return NO_RECENT_CONTEXT;
+  }
+
+  const files = filenames
+    .flatMap((filename) => {
+      const match = /^transcript-(.+)\.jsonl$/.exec(filename);
+      if (!match || match[1].startsWith('replay-')) return [];
+      try {
+        return [{ videoId: match[1], filename, mtimeMs: statSync(join(dataDir, filename)).mtimeMs }];
+      } catch {
+        return [];
+      }
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, RECENT_CONTEXT_FILES);
+
+  let output = '';
+  for (const file of files) {
+    const text = new TranscriptStore(dataDir, file.videoId).toText().trim();
+    if (!text) continue;
+    const block = `來源 ${file.filename}\n${text}`;
+    const next = output ? `\n\n${block}` : block;
+    const remaining = RECENT_CONTEXT_LIMIT - output.length;
+    if (remaining <= 0) break;
+    if (next.length > remaining) {
+      output += next.slice(0, remaining);
+      break;
+    }
+    output += next;
+  }
+  return output || NO_RECENT_CONTEXT;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unsupported pending item: ${JSON.stringify(value)}`);
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

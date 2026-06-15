@@ -3,7 +3,10 @@
 #   DISCORD_BOT_TOKEN    - bot token, used for REST fan-out to subscribed channels
 #   DISCORD_PUBLIC_KEY   - Discord application public key (interactions signature check)
 #   SUBSCRIPTIONS_SECRET - shared secret for GET /subscriptions (same value in GitHub secrets)
+#   X_BEARER_TOKEN       - optional X API bearer token for syncing configured accounts
 #   GITHUB_TOKEN         - fine-grained PAT, this repo only, Contents: read & write
+# Keep the existing Cloudflare Worker script name so deployed secrets and the
+# home-agent SUBSCRIPTIONS_URL continue to work after the GitHub repo rename.
 name = "potus-live-worker"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
@@ -14,7 +17,8 @@ crons = ["* * * * *"]
 [vars]
 # @WhiteHouse channel id
 CHANNEL_ID = "UCYxRlFDqcWM4y7FfpiAN3KQ"
-GITHUB_REPO = "TakalaWang/potus-live-bot"
+GITHUB_REPO = "TakalaWang/president-signal-bot"
+X_USERNAMES = "realDonaldTrump,WhiteHouse,POTUS"
 
 [[kv_namespaces]]
 binding = "STATE"

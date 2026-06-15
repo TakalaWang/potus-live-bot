@@ -1,13 +1,9 @@
-import type { SessionMeta } from './pipeline.js';
-
-export interface PendingStream {
-  videoId: string;
-  title: string;
-}
+import type { PendingItem } from './types.js';
+import { workerRouteUrl } from './worker-url.js';
 
 export interface AgentClient {
-  listPending(): Promise<PendingStream[]>;
-  markDone(videoId: string): Promise<void>;
+  listPending(): Promise<PendingItem[]>;
+  markDone(pendingId: string): Promise<void>;
 }
 
 /** Talks to the Worker's /pending and /pending/done endpoints. */
@@ -17,19 +13,19 @@ export class WorkerAgentClient implements AgentClient {
     private readonly secret: string,
   ) {}
 
-  async listPending(): Promise<PendingStream[]> {
-    const res = await fetch(new URL('/pending', this.baseUrl), {
+  async listPending(): Promise<PendingItem[]> {
+    const res = await fetch(workerRouteUrl(this.baseUrl, '/pending'), {
       headers: { authorization: `Bearer ${this.secret}` },
     });
     if (!res.ok) throw new Error(`/pending ${res.status}: ${await res.text()}`);
-    return (await res.json()) as PendingStream[];
+    return (await res.json()) as PendingItem[];
   }
 
-  async markDone(videoId: string): Promise<void> {
-    const res = await fetch(new URL('/pending/done', this.baseUrl), {
+  async markDone(pendingId: string): Promise<void> {
+    const res = await fetch(workerRouteUrl(this.baseUrl, '/pending/done'), {
       method: 'POST',
       headers: { authorization: `Bearer ${this.secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ videoId }),
+      body: JSON.stringify({ pendingId }),
     });
     if (!res.ok) throw new Error(`/pending/done ${res.status}: ${await res.text()}`);
   }
@@ -37,9 +33,9 @@ export class WorkerAgentClient implements AgentClient {
 
 export interface AgentDeps {
   client: AgentClient;
-  isDone: (videoId: string) => boolean;
-  process: (meta: SessionMeta) => Promise<void>;
-  markDone: (videoId: string) => void;
+  isDone: (pendingId: string) => boolean;
+  process: (item: PendingItem) => Promise<void>;
+  markDone: (pendingId: string) => void;
 }
 
 /**
@@ -49,21 +45,25 @@ export interface AgentDeps {
  */
 export async function runAgentPass(deps: AgentDeps): Promise<void> {
   const pending = await deps.client.listPending();
-  for (const stream of pending) {
-    if (deps.isDone(stream.videoId)) {
-      await deps.client.markDone(stream.videoId);
+  for (const item of pending) {
+    if (deps.isDone(item.pendingId)) {
+      await deps.client.markDone(item.pendingId);
       continue;
     }
-    const videoUrl = `https://www.youtube.com/watch?v=${stream.videoId}`;
-    console.log(`[agent] 處理待辦場次：${stream.videoId} ${stream.title}`);
+    console.log(`[agent] 處理待辦項目：${item.pendingId} ${pendingTitle(item)}`);
     try {
-      await deps.process({ videoId: stream.videoId, title: stream.title, videoUrl });
-      deps.markDone(stream.videoId);
-      await deps.client.markDone(stream.videoId);
-      console.log(`[agent] 完成並回報：${stream.videoId}`);
+      await deps.process(item);
+      deps.markDone(item.pendingId);
+      await deps.client.markDone(item.pendingId);
+      console.log(`[agent] 完成並回報：${item.pendingId}`);
     } catch (err) {
       // leave it queued; next pass retries (e.g. transient YouTube/network failure)
-      console.error(`[agent] 場次 ${stream.videoId} 處理失敗，保留待辦下次重試：`, err);
+      console.error(`[agent] 待辦項目 ${item.pendingId} 處理失敗，保留待辦下次重試：`, err);
     }
   }
+}
+
+function pendingTitle(item: PendingItem): string {
+  if (item.kind === 'video') return item.title;
+  return `@${item.username}: ${item.text.slice(0, 80)}`;
 }

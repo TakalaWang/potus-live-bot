@@ -2,7 +2,9 @@ import type { EmbedBuilder } from 'discord.js';
 import type { NotifierLike } from './notifier.js';
 
 export class ConsoleNotifier implements NotifierLike {
-  async start(): Promise<void> {}
+  start(): Promise<void> {
+    return Promise.resolve();
+  }
 
   async notifyLiveStart(title: string, url: string): Promise<void> {
     console.log(`[dry-run] 🔴 直播開始：${title}\n${url}`);
@@ -17,5 +19,7 @@ export class ConsoleNotifier implements NotifierLike {
     console.log(transcriptTxt.toString('utf8'));
   }
 
-  async stop(): Promise<void> {}
+  stop(): Promise<void> {
+    return Promise.resolve();
+  }
 }

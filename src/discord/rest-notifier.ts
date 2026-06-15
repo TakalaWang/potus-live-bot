@@ -9,8 +9,13 @@ export class RestNotifier implements NotifierLike {
     private readonly channelIds: string[],
   ) {}
 
-  async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  start(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  stop(): Promise<void> {
+    return Promise.resolve();
+  }
 
   async notifyLiveStart(title: string, url: string): Promise<void> {
     const body = JSON.stringify({

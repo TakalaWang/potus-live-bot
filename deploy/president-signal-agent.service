@@ -1,12 +1,12 @@
 [Unit]
-Description=potus-live-bot home agent (downloads VOD on a residential IP and runs the report pipeline)
+Description=president-signal-bot home agent (downloads VOD on a residential IP and runs the report pipeline)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/potus-live-bot
-EnvironmentFile=/opt/potus-live-bot/.env
+WorkingDirectory=/opt/president-signal-bot
+EnvironmentFile=/opt/president-signal-bot/.env
 ExecStart=/usr/bin/node dist/index.js --agent
 Restart=always
 RestartSec=15

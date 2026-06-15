@@ -43,7 +43,7 @@ describe('loadConfig', () => {
     expect(cfg.pollIntervalSec).toBe(60);
     expect(cfg.dataDir).toBe('./data');
     expect(cfg.transcribeModel).toBe('gemini-3.1-flash-lite');
-    expect(cfg.analyzeModel).toBe('gemini-3.5-flash');
+    expect(cfg.analyzeModel).toBe('gemini-3.1-flash-lite');
     expect(cfg.vadModelPath).toBe('models/silero_vad.onnx');
   });
 

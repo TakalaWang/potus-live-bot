@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p models
-if [ -f models/silero_vad.onnx ]; then
+if [[ -f models/silero_vad.onnx ]]; then
   echo "models/silero_vad.onnx already exists, skipping"
   exit 0
 fi

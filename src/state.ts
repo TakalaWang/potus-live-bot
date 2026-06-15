@@ -4,7 +4,7 @@ import type { TranscriptSegment } from './types.js';
 
 export class SeenStore {
   private readonly filePath: string;
-  private seen: Set<string>;
+  private readonly seen: Set<string>;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });

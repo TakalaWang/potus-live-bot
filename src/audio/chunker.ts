@@ -39,7 +39,7 @@ export class SpeechChunker {
   private readonly frameSec: number;
 
   private frameIndex = 0;
-  private ring: Buffer[] = [];
+  private readonly ring: Buffer[] = [];
   private open: OpenSegment | null = null;
   private pending: ClosedSegment[] = [];
   private pendingFrameCount = 0;
@@ -52,7 +52,7 @@ export class SpeechChunker {
     this.threshold = opts.threshold ?? 0.5;
     this.prePadFrames = Math.round((opts.prePadSec ?? 0.3) / this.frameSec);
     this.postPadFrames = Math.round((opts.postPadSec ?? 0.3) / this.frameSec);
-    this.closeGapFrames = Math.round((opts.closeGapSec ?? 1.0) / this.frameSec);
+    this.closeGapFrames = Math.round((opts.closeGapSec ?? 1) / this.frameSec);
     this.maxSpeechSec = opts.maxSpeechSec ?? 45;
     this.maxIntervalSec = opts.maxIntervalSec ?? 180;
 
@@ -152,7 +152,7 @@ export class SpeechChunker {
     if (this.pending.length === 0) return null;
 
     const first = this.pending[0];
-    const last = this.pending[this.pending.length - 1];
+    const last = this.pending.at(-1)!;
     const chunk: SpeechChunk = {
       pcm: Buffer.concat(this.pending.flatMap((s) => s.frames)),
       startSec: first.startFrame * this.frameSec,

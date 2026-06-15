@@ -100,7 +100,7 @@ describe('SpeechChunker', () => {
   });
 
   it('距上次 flush 超過 maxIntervalSec 且有內容時 flush', () => {
-    const c = new SpeechChunker({ ...OPTS, maxIntervalSec: 1.0 });
+    const c = new SpeechChunker({ ...OPTS, maxIntervalSec: 1 });
 
     push(c, 0, 5, 0.9);
     const chunks = push(c, 5, 40, 0.1);
@@ -113,7 +113,7 @@ describe('SpeechChunker', () => {
   });
 
   it('長時間靜音後才開始說話，不會因 maxIntervalSec 立刻 flush 小段落', () => {
-    const c = new SpeechChunker({ ...OPTS, maxIntervalSec: 1.0 });
+    const c = new SpeechChunker({ ...OPTS, maxIntervalSec: 1 });
 
     push(c, 0, 60, 0.1);
     const during = push(c, 60, 5, 0.9);

@@ -1,10 +1,22 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { captureLive, type CaptureDeps } from '../src/audio/ingest.js';
+import {
+  captureFile,
+  captureLive,
+  ytDlpAudioArgs,
+  type CaptureDeps,
+  type CaptureFileDeps,
+} from '../src/audio/ingest.js';
 import type { LiveCheck } from '../src/types.js';
 
-function fakeFfmpeg(pcmChunks: Buffer[] = []) {
+type FakeFfmpegProcess = ReturnType<CaptureFileDeps['spawnPcm']>;
+
+function fakeFfmpeg(
+  pcmChunks: Buffer[] = [],
+  closeCode: number | null = 0,
+  stderrChunks: string[] = [],
+): FakeFfmpegProcess {
   const proc = new EventEmitter() as EventEmitter & {
     stdout: PassThrough;
     stderr: PassThrough;
@@ -17,11 +29,13 @@ function fakeFfmpeg(pcmChunks: Buffer[] = []) {
     setImmediate(() => proc.emit('close', null));
   };
   setImmediate(() => {
+    for (const c of stderrChunks) proc.stderr.write(c);
     for (const c of pcmChunks) proc.stdout.write(c);
     proc.stdout.end();
-    setImmediate(() => proc.emit('close', 0));
+    proc.stderr.end();
+    setImmediate(() => proc.emit('close', closeCode));
   });
-  return proc;
+  return proc as unknown as FakeFfmpegProcess;
 }
 
 function makeDeps(liveSequence: LiveCheck[], opts: { urlFail?: number } = {}): {
@@ -47,10 +61,10 @@ function makeDeps(liveSequence: LiveCheck[], opts: { urlFail?: number } = {}): {
         return 'https://fake-hls/playlist.m3u8';
       },
 
-      spawnPcm: (() => {
+      spawnPcm: () => {
         calls.spawns++;
         return fakeFfmpeg([Buffer.alloc(2048)]);
-      }) as any,
+      },
       sleep: async () => {},
     },
   };
@@ -108,5 +122,32 @@ describe('captureLive supervisor loop', () => {
     const handle = captureLive('url', 'vid1', () => {}, deps);
     setTimeout(() => handle.abort(), 20);
     expect(await handle.done).toBe('aborted');
+  });
+});
+
+describe('captureFile', () => {
+  it('YouTube URL 解析只選擇 HLS 音訊來源，避免 DASH 首段壞 fragment 造成空轉錄', () => {
+    expect(ytDlpAudioArgs('https://www.youtube.com/watch?v=vid1')).toEqual([
+      '-g',
+      '-f',
+      'worst[protocol^=m3u8][acodec!=none]',
+      'https://www.youtube.com/watch?v=vid1',
+    ]);
+  });
+
+  it('ffmpeg non-zero exit 會讓 capture 失敗，而不是產生空報告', async () => {
+    const handle = captureFile('bad-input', () => {}, {
+      spawnPcm: () => fakeFfmpeg([], 1, ['Invalid data found when processing input']),
+    });
+
+    await expect(handle.done).rejects.toThrow(/ffmpeg.*exit code 1.*Invalid data found/);
+  });
+
+  it('ffmpeg 成功但沒有輸出任何 PCM 時也視為失敗', async () => {
+    const handle = captureFile('silent-output', () => {}, {
+      spawnPcm: () => fakeFfmpeg([], 0),
+    });
+
+    await expect(handle.done).rejects.toThrow(/no PCM/i);
   });
 });

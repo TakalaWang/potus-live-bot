@@ -41,6 +41,26 @@ export interface StockQuote {
   marketState: string;
 }
 
+export interface PendingVideo {
+  kind: 'video';
+  pendingId: string;
+  videoId: string;
+  title: string;
+  videoUrl: string;
+}
+
+export interface PendingXPost {
+  kind: 'x-post';
+  pendingId: string;
+  postId: string;
+  username: string;
+  text: string;
+  createdAt: string;
+  url: string;
+}
+
+export type PendingItem = PendingVideo | PendingXPost;
+
 export type LiveCheck =
   | { state: 'live'; videoId: string; title: string }
   | { state: 'upcoming'; videoId: string; title: string }

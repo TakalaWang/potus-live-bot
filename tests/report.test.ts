@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReport, DISCLAIMER, embedTotalLength } from '../src/report.js';
+import { buildReport, buildSocialReport, DISCLAIMER, embedTotalLength } from '../src/report.js';
 import type { AnalysisResult, StockQuote } from '../src/types.js';
 
 const ANALYSIS: AnalysisResult = {
@@ -70,7 +70,7 @@ describe('buildReport', () => {
 
   it('免責聲明一定存在', () => {
     const embeds = buildReport(ANALYSIS, QUOTES, META);
-    const last = embeds[embeds.length - 1];
+    const last = embeds.at(-1)!;
     expect(last.data.footer?.text).toBe(DISCLAIMER);
   });
 
@@ -119,5 +119,25 @@ describe('buildReport', () => {
       total += embedTotalLength(e);
     }
     expect(total).toBeLessThanOrEqual(6000);
+  });
+});
+
+describe('buildSocialReport', () => {
+  it('組出 X 發文摘要、市場觀察、原文與免責聲明', () => {
+    const embeds = buildSocialReport(ANALYSIS, QUOTES, {
+      username: 'realDonaldTrump',
+      postUrl: 'https://x.com/realDonaldTrump/status/123',
+      text: 'a twenty five percent tariff on all imported semiconductors',
+      createdAt: '2026-06-12T00:00:00Z',
+    });
+
+    expect(embeds).toHaveLength(2);
+    expect(embeds[0].data.title).toContain('@realDonaldTrump');
+    expect(embeds[0].data.url).toBe('https://x.com/realDonaldTrump/status/123');
+    expect(JSON.stringify(embeds[0].data.fields)).toContain('原文');
+    expect(JSON.stringify(embeds[0].data.fields)).toContain('imported semiconductors');
+    expect(embeds[1].data.title).toContain('投資留意方向');
+    expect(JSON.stringify(embeds[1].data.fields)).toContain('SOXX');
+    expect(embeds.at(-1)!.data.footer?.text).toBe(DISCLAIMER);
   });
 });

@@ -40,7 +40,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     pollIntervalSec,
     dataDir: env.DATA_DIR ?? './data',
     transcribeModel: env.GEMINI_TRANSCRIBE_MODEL ?? 'gemini-3.1-flash-lite',
-    analyzeModel: env.GEMINI_ANALYZE_MODEL ?? 'gemini-3.5-flash',
+    analyzeModel: env.GEMINI_ANALYZE_MODEL ?? 'gemini-3.1-flash-lite',
     vadModelPath: env.VAD_MODEL_PATH ?? 'models/silero_vad.onnx',
   };
 }

@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EmbedBuilder } from 'discord.js';
 import { SpeechChunker } from '../src/audio/chunker.js';
-import { runLiveSession } from '../src/pipeline.js';
+import { runLiveSession, runSocialPostReport } from '../src/pipeline.js';
 import { TranscriptStore } from '../src/state.js';
-import type { AnalysisResult, VadFrame } from '../src/types.js';
+import type { AnalysisResult, PendingXPost, VadFrame } from '../src/types.js';
 
 const FRAME_BYTES = 1024;
 
@@ -181,6 +181,50 @@ describe('runLiveSession', () => {
     expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('轉錄缺漏');
   });
 
+  it('VOD 讀取快於 ASR 時會 backpressure，不丟棄 chunk', async () => {
+    const transcript = new TranscriptStore(dir, 'vid-backpressure');
+    let calls = 0;
+
+    await runLiveSession(
+      { videoId: 'vid-backpressure', title: 'T', videoUrl: 'https://youtu.be/vid-backpressure' },
+      {
+        vad: makeFakeVad(),
+        chunker: new SpeechChunker({ ...CHUNKER_OPTS, maxSpeechSec: 0.2 }),
+        transcript,
+        transcriber: {
+          async transcribe() {
+            calls++;
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return `ok-${calls}`;
+          },
+        },
+        analyzer: {
+          async analyze() {
+            return { summaryZh: 's', keyPoints: [], marketImpacts: [] };
+          },
+        },
+        getQuotes: async () => [],
+        notifier: {
+          async sendReport() {},
+        },
+        startCapture: (onPcm) => {
+          const done = (async () => {
+            for (let i = 0; i < 30; i++) {
+              await onPcm(speechFrames(8));
+              await onPcm(silenceFrames(8));
+            }
+            return 'ended' as const;
+          })();
+          return { done, abort: () => {} };
+        },
+      },
+    );
+
+    expect(calls).toBeGreaterThan(20);
+    expect(transcript.readAll().map((s) => s.text)).toHaveLength(calls);
+    expect(transcript.toText()).not.toContain('轉錄失敗');
+  });
+
   it('完全沒有語音時不呼叫分析、送出無語音報告', async () => {
     const transcript = new TranscriptStore(dir, 'vid3');
     let analyzerCalled = false;
@@ -221,6 +265,45 @@ describe('runLiveSession', () => {
 
     expect(analyzerCalled).toBe(false);
     expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('未偵測到語音');
+  });
+
+  it('capture 沒有收到任何 PCM 時失敗，不送出無語音報告', async () => {
+    const transcript = new TranscriptStore(dir, 'vid-empty-capture');
+    let analyzerCalled = false;
+    let reportSent = false;
+
+    await expect(
+      runLiveSession(
+        { videoId: 'vid-empty-capture', title: 'T', videoUrl: 'https://youtu.be/vid-empty-capture' },
+        {
+          vad: makeFakeVad(),
+          chunker: new SpeechChunker(CHUNKER_OPTS),
+          transcript,
+          transcriber: {
+            async transcribe() {
+              throw new Error('不應被呼叫');
+            },
+          },
+          analyzer: {
+            async analyze() {
+              analyzerCalled = true;
+              return { summaryZh: '', keyPoints: [], marketImpacts: [] };
+            },
+          },
+          getQuotes: async () => [],
+          notifier: {
+            async sendReport() {
+              reportSent = true;
+            },
+          },
+          startCapture: () => ({ done: Promise.resolve('ended' as const), abort: () => {} }),
+        },
+      ),
+    ).rejects.toThrow(/no PCM/i);
+
+    expect(transcript.readAll()).toEqual([]);
+    expect(analyzerCalled).toBe(false);
+    expect(reportSent).toBe(false);
   });
 
   it('重啟 reattach：時間戳接續舊時間軸、報告註明中斷、長度含重啟前', async () => {
@@ -305,40 +388,145 @@ describe('runLiveSession', () => {
     expect(reportSent).toBe(false);
   });
 
-  it('分析失敗時仍送出報告（含逐字稿附件）', async () => {
+  it('分析失敗時丟錯且不送 fallback 報告，讓待辦下次重試', async () => {
     const transcript = new TranscriptStore(dir, 'vid4');
     let sent: { embeds: EmbedBuilder[]; txt: Buffer } | null = null;
 
-    await runLiveSession(
-      { videoId: 'vid4', title: 'T', videoUrl: 'https://youtu.be/vid4' },
+    await expect(
+      runLiveSession(
+        { videoId: 'vid4', title: 'T', videoUrl: 'https://youtu.be/vid4' },
+        {
+          vad: makeFakeVad(),
+          chunker: new SpeechChunker(CHUNKER_OPTS),
+          transcript,
+          transcriber: { transcribe: async () => 'some words' },
+          analyzer: {
+            async analyze(): Promise<AnalysisResult> {
+              throw new Error('model overloaded');
+            },
+          },
+          getQuotes: async () => [],
+          notifier: {
+            async sendReport(embeds, txt) {
+              sent = { embeds, txt };
+            },
+          },
+          startCapture: (onPcm) => {
+            const done = (async () => {
+              await onPcm(speechFrames(10));
+              return 'ended' as const;
+            })();
+            return { done, abort: () => {} };
+          },
+        },
+      ),
+    ).rejects.toThrow('model overloaded');
+
+    expect(sent).toBeNull();
+    expect(transcript.toText()).toContain('some words');
+  });
+});
+
+describe('runSocialPostReport', () => {
+  it('分析 X 發文、查行情、送出原文與近期脈絡附件', async () => {
+    const post: PendingXPost = {
+      kind: 'x-post',
+      pendingId: 'x:123',
+      postId: '123',
+      username: 'realDonaldTrump',
+      text: 'a twenty five percent tariff on all imported semiconductors',
+      createdAt: '2026-06-12T00:00:00Z',
+      url: 'https://x.com/realDonaldTrump/status/123',
+    };
+    const analysis: AnalysisResult = {
+      summaryZh: 'X 發文提到半導體關稅。',
+      keyPoints: ['提到進口半導體關稅'],
+      marketImpacts: [
+        {
+          theme: '半導體',
+          direction: 'bearish',
+          quote: 'a twenty five percent tariff on all imported semiconductors',
+          reason: '進口半導體關稅將影響相關供應鏈成本。',
+          exampleTickers: ['soxx'],
+          confidence: 'high',
+        },
+      ],
+    };
+    let contextSeen = '';
+    let quoteSymbols: string[] = [];
+    let sent: { embeds: EmbedBuilder[]; txt: Buffer; filename: string } | null = null;
+
+    await runSocialPostReport(
+      post,
       {
-        vad: makeFakeVad(),
-        chunker: new SpeechChunker(CHUNKER_OPTS),
-        transcript,
-        transcriber: { transcribe: async () => 'some words' },
         analyzer: {
-          async analyze(): Promise<AnalysisResult> {
-            throw new Error('model overloaded');
+          async analyzePost(input, recentContext) {
+            expect(input).toBe(post);
+            contextSeen = recentContext;
+            return analysis;
           },
         },
-        getQuotes: async () => [],
+        getQuotes: async (symbols) => {
+          quoteSymbols = symbols;
+          return symbols.map((symbol) => ({
+            symbol,
+            name: symbol,
+            price: 100,
+            changePercent: -1.5,
+            currency: 'USD',
+            marketState: 'REGULAR',
+          }));
+        },
         notifier: {
-          async sendReport(embeds, txt) {
-            sent = { embeds, txt };
+          async sendReport(embeds, txt, filename) {
+            sent = { embeds, txt, filename };
           },
-        },
-        startCapture: (onPcm) => {
-          const done = (async () => {
-            await onPcm(speechFrames(10));
-            return 'ended' as const;
-          })();
-          return { done, abort: () => {} };
         },
       },
+      'recent transcript context',
     );
 
+    expect(contextSeen).toBe('recent transcript context');
+    expect(quoteSymbols).toEqual(['SOXX']);
     expect(sent).not.toBeNull();
-    expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('分析失敗');
-    expect(sent!.txt.toString()).toContain('some words');
+    expect(sent!.filename).toBe('x-post-123.txt');
+    expect(sent!.txt.toString()).toContain('recent transcript context');
+    expect(sent!.txt.toString()).toContain(post.text);
+    expect(JSON.stringify(sent!.embeds.map((e) => e.toJSON()))).toContain('投資留意方向');
+  });
+
+  it('X 發文分析失敗時丟錯且不送 fallback 報告', async () => {
+    const post: PendingXPost = {
+      kind: 'x-post',
+      pendingId: 'x:123',
+      postId: '123',
+      username: 'realDonaldTrump',
+      text: 'Tariffs are coming.',
+      createdAt: '2026-06-12T00:00:00Z',
+      url: 'https://x.com/realDonaldTrump/status/123',
+    };
+    let reportSent = false;
+
+    await expect(
+      runSocialPostReport(
+        post,
+        {
+          analyzer: {
+            async analyzePost() {
+              throw new Error('gemini unavailable');
+            },
+          },
+          getQuotes: async () => [],
+          notifier: {
+            async sendReport() {
+              reportSent = true;
+            },
+          },
+        },
+        'recent context',
+      ),
+    ).rejects.toThrow('gemini unavailable');
+
+    expect(reportSent).toBe(false);
   });
 });

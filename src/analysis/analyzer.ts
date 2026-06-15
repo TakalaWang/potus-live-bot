@@ -1,4 +1,5 @@
-import { Type, type GoogleGenAI } from '@google/genai';
+import type { GoogleGenAI } from '@google/genai';
+import { ANALYSIS_RESPONSE_SCHEMA } from './schema.js';
 import type { AnalysisResult } from '../types.js';
 
 const PROMPT_HEADER = `你是一位金融分析師。以下是一場白宮 YouTube 直播的英文逐字稿（含 [mm:ss] 時間戳）。請：
@@ -17,31 +18,6 @@ const PROMPT_HEADER = `你是一位金融分析師。以下是一場白宮 YouTu
 逐字稿：
 `;
 
-const RESPONSE_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    summaryZh: { type: Type.STRING, description: '繁體中文摘要' },
-    keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
-    marketImpacts: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          theme: { type: Type.STRING, description: '受影響的產業／領域／主題' },
-          direction: { type: Type.STRING, enum: ['bullish', 'bearish'] },
-          quote: { type: Type.STRING, description: '逐字稿中的英文原文依據（必須真實出現）' },
-          reason: { type: Type.STRING, description: '繁體中文，緊扣 quote 字面，不延伸' },
-          exampleTickers: { type: Type.ARRAY, items: { type: Type.STRING } },
-          confidence: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
-        },
-        required: ['theme', 'direction', 'quote', 'reason', 'exampleTickers', 'confidence'],
-      },
-    },
-  },
-  required: ['summaryZh', 'keyPoints', 'marketImpacts'],
-  propertyOrdering: ['summaryZh', 'keyPoints', 'marketImpacts'],
-};
-
 export class Analyzer {
   constructor(
     private readonly ai: GoogleGenAI,
@@ -55,7 +31,7 @@ export class Analyzer {
       config: {
         temperature: 0.2,
         responseMimeType: 'application/json',
-        responseSchema: RESPONSE_SCHEMA,
+        responseSchema: ANALYSIS_RESPONSE_SCHEMA,
       },
     });
     const parsed = JSON.parse(response.text ?? '{}') as Partial<AnalysisResult>;

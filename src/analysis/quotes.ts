@@ -16,7 +16,7 @@ export async function getQuotes(symbols: string[]): Promise<StockQuote[]> {
     quoteMap = new Map();
     for (const symbol of requested) {
       try {
-        const q = (await yahooFinance.quote(symbol)) as Quote | undefined;
+        const q = await yahooFinance.quote(symbol);
         if (q) quoteMap.set(q.symbol, q);
       } catch (innerErr) {
         console.warn(`[quotes] 略過 ${symbol}：${(innerErr as Error).message}`);
@@ -27,7 +27,7 @@ export async function getQuotes(symbols: string[]): Promise<StockQuote[]> {
   const results: StockQuote[] = [];
   for (const symbol of requested) {
     const q = quoteMap.get(symbol) ?? quoteMap.get(symbol.replace('.', '-'));
-    if (!q || q.regularMarketPrice === undefined) {
+    if (q?.regularMarketPrice === undefined) {
       console.warn(`[quotes] ${symbol} 查無行情（無效 ticker？）`);
       continue;
     }
